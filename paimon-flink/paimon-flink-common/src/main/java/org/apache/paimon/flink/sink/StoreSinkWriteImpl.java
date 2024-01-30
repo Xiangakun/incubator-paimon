@@ -27,7 +27,7 @@ import org.apache.paimon.io.DataFileMeta;
 import org.apache.paimon.memory.HeapMemorySegmentPool;
 import org.apache.paimon.memory.MemoryPoolFactory;
 import org.apache.paimon.memory.MemorySegmentPool;
-import org.apache.paimon.operation.AbstractFileStoreWrite;
+import org.apache.paimon.operation.FileStoreWrite;
 import org.apache.paimon.table.FileStoreTable;
 import org.apache.paimon.table.sink.CommitMessage;
 import org.apache.paimon.table.sink.SinkRecord;
@@ -146,7 +146,8 @@ public class StoreSinkWriteImpl implements StoreSinkWrite {
                                         state.stateValueFilter().filter(table.name(), part, bucket))
                         .withIOManager(paimonIOManager)
                         .withIgnorePreviousFiles(ignorePreviousFiles)
-                        .isStreamingMode(isStreamingMode);
+                        .withExecutionMode(isStreamingMode)
+                        .withBucketMode(table.bucketMode());
 
         if (metricGroup != null) {
             tableWrite.withMetricRegistry(new FlinkMetricRegistry(metricGroup));
@@ -171,6 +172,11 @@ public class StoreSinkWriteImpl implements StoreSinkWrite {
     @Override
     public SinkRecord write(InternalRow rowData) throws Exception {
         return write.writeAndReturn(rowData);
+    }
+
+    @Override
+    public SinkRecord write(InternalRow rowData, int bucket) throws Exception {
+        return write.writeAndReturn(rowData, bucket);
     }
 
     @Override
@@ -240,7 +246,7 @@ public class StoreSinkWriteImpl implements StoreSinkWrite {
             return;
         }
 
-        List<? extends AbstractFileStoreWrite.State<?>> states = write.checkpoint();
+        List<? extends FileStoreWrite.State<?>> states = write.checkpoint();
         write.close();
         write = newTableWrite(newTable);
         write.restore((List) states);

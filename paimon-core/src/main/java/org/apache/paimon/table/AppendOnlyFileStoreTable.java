@@ -32,6 +32,7 @@ import org.apache.paimon.operation.Lock;
 import org.apache.paimon.predicate.Predicate;
 import org.apache.paimon.reader.RecordReader;
 import org.apache.paimon.schema.TableSchema;
+import org.apache.paimon.table.query.LocalTableQuery;
 import org.apache.paimon.table.sink.TableWriteImpl;
 import org.apache.paimon.table.source.AbstractDataTableRead;
 import org.apache.paimon.table.source.AppendOnlySplitGenerator;
@@ -46,7 +47,7 @@ import java.io.IOException;
 import java.util.function.BiConsumer;
 
 /** {@link FileStoreTable} for append table. */
-public class AppendOnlyFileStoreTable extends AbstractFileStoreTable {
+class AppendOnlyFileStoreTable extends AbstractFileStoreTable {
 
     private static final long serialVersionUID = 1L;
 
@@ -81,13 +82,14 @@ public class AppendOnlyFileStoreTable extends AbstractFileStoreTable {
                             tableSchema.logicalPartitionType(),
                             tableSchema.logicalBucketKeyType(),
                             tableSchema.logicalRowType(),
-                            name());
+                            name(),
+                            catalogEnvironment);
         }
         return lazyStore;
     }
 
     @Override
-    public SplitGenerator splitGenerator() {
+    protected SplitGenerator splitGenerator() {
         return new AppendOnlySplitGenerator(
                 store().options().splitTargetSize(),
                 store().options().splitOpenFileCost(),
@@ -104,7 +106,7 @@ public class AppendOnlyFileStoreTable extends AbstractFileStoreTable {
     }
 
     @Override
-    public BiConsumer<FileStoreScan, Predicate> nonPartitionFilterConsumer() {
+    protected BiConsumer<FileStoreScan, Predicate> nonPartitionFilterConsumer() {
         return (scan, predicate) -> ((AppendOnlyFileStoreScan) scan).withFilter(predicate);
     }
 
@@ -145,7 +147,11 @@ public class AppendOnlyFileStoreTable extends AbstractFileStoreTable {
                             "Append only writer can not accept row with RowKind %s",
                             record.row().getRowKind());
                     return record.row();
-                },
-                name());
+                });
+    }
+
+    @Override
+    public LocalTableQuery newLocalTableQuery() {
+        throw new UnsupportedOperationException();
     }
 }

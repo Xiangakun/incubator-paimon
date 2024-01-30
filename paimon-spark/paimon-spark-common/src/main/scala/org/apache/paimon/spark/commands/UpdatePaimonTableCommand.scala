@@ -19,21 +19,21 @@ package org.apache.paimon.spark.commands
 
 import org.apache.paimon.options.Options
 import org.apache.paimon.spark.{InsertInto, SparkTable}
+import org.apache.paimon.spark.catalyst.analysis.{AssignmentAlignmentHelper, PaimonRelation}
+import org.apache.paimon.spark.leafnode.PaimonLeafRunnableCommand
 import org.apache.paimon.spark.schema.SparkSystemColumns.ROW_KIND_COL
 import org.apache.paimon.table.FileStoreTable
 import org.apache.paimon.types.RowKind
 
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.Utils.createDataset
-import org.apache.spark.sql.catalyst.analysis.{AssignmentAlignmentHelper, PaimonRelation}
 import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, Project, UpdateTable}
-import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.functions.lit
 
 case class UpdatePaimonTableCommand(u: UpdateTable)
-  extends LeafRunnableCommand
+  extends PaimonLeafRunnableCommand
   with AssignmentAlignmentHelper {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {

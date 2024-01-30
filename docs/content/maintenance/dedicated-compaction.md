@@ -101,7 +101,7 @@ Example: compact table
 
 ```bash
 <FLINK_HOME>/bin/flink run \
-    /path/to/paimon-flink-action-0.6-SNAPSHOT.jar \
+    /path/to/paimon-flink-action-{{< version >}}.jar \
     compact \
     --warehouse s3:///path/to/warehouse \
     --database test_db \
@@ -223,8 +223,8 @@ For more usage of the compact_database action, see
 
 ## Sort Compact
 
-If your table is configured with [dynamic bucket]({{< ref "concepts/primary-key-table#dynamic-bucket" >}})
-or [append table]({{< ref "concepts/append-only-table#append-for-scalable-table" >}}) ,
+If your table is configured with [dynamic bucket primary key table]({{< ref "concepts/primary-key-table/data-distribution#dynamic-bucket" >}})
+or [unaware bucket append table]({{< ref "concepts/append-table/append-scalable-table" >}}) ,
 you can trigger a compact with specified column sort to speed up queries.
 
 ```bash  

@@ -17,9 +17,8 @@
  */
 package org.apache.paimon.spark
 
-import org.apache.paimon.predicate.{PartitionPredicateVisitor, Predicate, PredicateBuilder}
+import org.apache.paimon.predicate.{PartitionPredicateVisitor, Predicate}
 import org.apache.paimon.table.Table
-import org.apache.paimon.table.source.ReadBuilder
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.connector.read.{Scan, ScanBuilder, SupportsPushDownFilters, SupportsPushDownRequiredColumns}
@@ -34,22 +33,16 @@ abstract class PaimonBaseScanBuilder(table: Table)
   with SupportsPushDownRequiredColumns
   with Logging {
 
-  protected var predicates: Option[Predicate] = None
+  protected var requiredSchema: StructType = SparkTypeUtils.fromPaimonRowType(table.rowType())
 
-  protected var pushed: Option[Array[Filter]] = None
+  protected var pushed: Array[(Filter, Predicate)] = Array.empty
 
-  protected var projectedIndexes: Option[Array[Int]] = None
+  protected var reservedFilters: Array[Filter] = Array.empty
 
-  protected def getReadBuilder(): ReadBuilder = {
-    val readBuilder = table.newReadBuilder()
-    projectedIndexes.foreach(readBuilder.withProjection)
-    predicates.foreach(readBuilder.withFilter)
-
-    readBuilder
-  }
+  protected var pushDownLimit: Option[Int] = None
 
   override def build(): Scan = {
-    new PaimonScan(table, getReadBuilder());
+    PaimonScan(table, requiredSchema, pushed.map(_._2), reservedFilters, pushDownLimit)
   }
 
   /**
@@ -58,9 +51,9 @@ abstract class PaimonBaseScanBuilder(table: Table)
    * filters must be interpreted as ANDed together.
    */
   override def pushFilters(filters: Array[Filter]): Array[Filter] = {
-    val pushable = mutable.ArrayBuffer.empty[Filter]
+    val pushable = mutable.ArrayBuffer.empty[(Filter, Predicate)]
     val postScan = mutable.ArrayBuffer.empty[Filter]
-    val predicates = mutable.ArrayBuffer.empty[Predicate]
+    val reserved = mutable.ArrayBuffer.empty[Filter]
 
     val converter = new SparkFilterConverter(table.rowType)
     val visitor = new PartitionPredicateVisitor(table.partitionKeys())
@@ -68,9 +61,12 @@ abstract class PaimonBaseScanBuilder(table: Table)
       filter =>
         try {
           val predicate = converter.convert(filter)
-          pushable.append(filter)
-          predicates.append(predicate)
-          if (!predicate.visit(visitor)) postScan.append(filter)
+          pushable.append((filter, predicate))
+          if (!predicate.visit(visitor)) {
+            postScan.append(filter)
+          } else {
+            reserved.append(filter)
+          }
         } catch {
           case e: UnsupportedOperationException =>
             logWarning(e.getMessage)
@@ -78,30 +74,20 @@ abstract class PaimonBaseScanBuilder(table: Table)
         }
     }
 
-    if (predicates.nonEmpty) {
-      this.predicates = Some(PredicateBuilder.and(predicates: _*))
+    if (pushable.nonEmpty) {
+      this.pushed = pushable.toArray
     }
-    this.pushed = Some(pushable.toArray)
+    if (reserved.nonEmpty) {
+      this.reservedFilters = reserved.toArray
+    }
     postScan.toArray
   }
 
-  /**
-   * Returns the filters that are pushed to the data source via {@link # pushFilters ( Filter [ ]
-   * )}. <p> There are 3 kinds of filters: <ol> <li>pushable filters which don't need to be
-   * evaluated again after scanning.</li> <li>pushable filters which still need to be evaluated
-   * after scanning, e.g. parquet row group filter.</li> <li>non-pushable filters.</li> </ol> <p>
-   * Both case 1 and 2 should be considered as pushed filters and should be returned by this method.
-   * <p> It's possible that there is no filters in the query and {@link # pushFilters ( Filter [ ]
-   * )} is never called, empty array should be returned for this case.
-   */
   override def pushedFilters(): Array[Filter] = {
-    pushed.getOrElse(Array.empty)
+    pushed.map(_._1)
   }
 
   override def pruneColumns(requiredSchema: StructType): Unit = {
-    val pruneFields = requiredSchema.fieldNames
-    val fieldNames = table.rowType.getFieldNames
-    val projected = pruneFields.map(field => fieldNames.indexOf(field))
-    this.projectedIndexes = Some(projected)
+    this.requiredSchema = requiredSchema
   }
 }

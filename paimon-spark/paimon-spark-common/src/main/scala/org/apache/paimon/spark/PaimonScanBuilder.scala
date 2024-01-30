@@ -17,25 +17,16 @@
  */
 package org.apache.paimon.spark
 
-import org.apache.paimon.table.{AppendOnlyFileStoreTable, Table}
-import org.apache.paimon.table.source.ReadBuilder
+import org.apache.paimon.table.Table
 
-import org.apache.spark.sql.connector.read.{Scan, SupportsPushDownLimit}
+import org.apache.spark.sql.connector.read.SupportsPushDownLimit
 
 class PaimonScanBuilder(table: Table)
   extends PaimonBaseScanBuilder(table)
   with SupportsPushDownLimit {
 
-  private var pushDownLimit: Option[Int] = None
-
-  override protected def getReadBuilder(): ReadBuilder = {
-    val readBuilder = super.getReadBuilder()
-    pushDownLimit.foreach(readBuilder.withLimit)
-    readBuilder
-  }
-
   override def pushLimit(limit: Int): Boolean = {
-    if (table.isInstanceOf[AppendOnlyFileStoreTable]) {
+    if (table.primaryKeys().isEmpty) {
       pushDownLimit = Some(limit)
     }
     // just make a best effort to push down limit

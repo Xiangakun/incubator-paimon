@@ -42,6 +42,7 @@ import org.apache.paimon.types.DataField;
 import org.apache.paimon.types.DataTypes;
 import org.apache.paimon.types.RowKind;
 import org.apache.paimon.types.RowType;
+import org.apache.paimon.utils.BloomFilter;
 import org.apache.paimon.utils.FileStorePathFactory;
 
 import org.junit.jupiter.api.Test;
@@ -198,6 +199,22 @@ public class LookupLevelsTest {
         assertThat(lookupLevels.lookupFiles().estimatedSize()).isEqualTo(0);
     }
 
+    @Test
+    public void testLookupEmptyLevel() throws IOException {
+        Levels levels =
+                new Levels(
+                        comparator,
+                        Arrays.asList(
+                                newFile(1, kv(1, 11), kv(3, 33), kv(5, 5)),
+                                // empty level 2
+                                newFile(3, kv(2, 22), kv(5, 55))),
+                        3);
+        LookupLevels lookupLevels = createLookupLevels(levels, MemorySize.ofMebiBytes(10));
+
+        KeyValue kv = lookupLevels.lookup(row(2), 1);
+        assertThat(kv).isNotNull();
+    }
+
     private LookupLevels createLookupLevels(Levels levels, MemorySize maxDiskSize) {
         return new LookupLevels(
                 levels,
@@ -209,9 +226,10 @@ public class LookupLevelsTest {
                                 .createRecordReader(
                                         0, file.fileName(), file.fileSize(), file.level()),
                 () -> new File(tempDir.toFile(), LOOKUP_FILE_PREFIX + UUID.randomUUID()),
-                new HashLookupStoreFactory(new CacheManager(2048, MemorySize.ofMebiBytes(1)), 0.75),
+                new HashLookupStoreFactory(new CacheManager(MemorySize.ofMebiBytes(1)), 2048, 0.75),
                 Duration.ofHours(1),
-                maxDiskSize);
+                maxDiskSize,
+                rowCount -> BloomFilter.builder(rowCount, 0.05));
     }
 
     private KeyValue kv(int key, int value) {

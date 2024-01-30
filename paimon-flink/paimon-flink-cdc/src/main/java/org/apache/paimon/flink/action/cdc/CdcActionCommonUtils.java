@@ -26,10 +26,14 @@ import org.apache.paimon.schema.TableSchema;
 import org.apache.paimon.types.DataField;
 import org.apache.paimon.types.DataType;
 
+import org.apache.flink.configuration.ConfigOption;
+import org.apache.flink.configuration.Configuration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -50,6 +54,7 @@ public class CdcActionCommonUtils {
     public static final String KAFKA_CONF = "kafka_conf";
     public static final String MONGODB_CONF = "mongodb_conf";
     public static final String MYSQL_CONF = "mysql_conf";
+    public static final String POSTGRES_CONF = "postgres_conf";
     public static final String PULSAR_CONF = "pulsar_conf";
     public static final String TABLE_PREFIX = "table_prefix";
     public static final String TABLE_SUFFIX = "table_suffix";
@@ -160,12 +165,14 @@ public class CdcActionCommonUtils {
     }
 
     public static Schema buildPaimonSchema(
+            String tableName,
             List<String> specifiedPartitionKeys,
             List<String> specifiedPrimaryKeys,
             List<ComputedColumn> computedColumns,
             Map<String, String> tableConfig,
             Schema sourceSchema,
             CdcMetadataConverter[] metadataConverters,
+            boolean caseSensitive,
             boolean requirePrimaryKeys) {
         Schema.Builder builder = Schema.newBuilder();
 
@@ -174,40 +181,54 @@ public class CdcActionCommonUtils {
         builder.options(sourceSchema.options());
 
         // fields
-        sourceSchema
-                .fields()
-                .forEach(
-                        dataField ->
-                                builder.column(
-                                        dataField.name(),
-                                        dataField.type(),
-                                        dataField.description()));
+        Set<String> existedFields = new HashSet<>();
+        Function<String, String> columnDuplicateErrMsg = columnDuplicateErrMsg(tableName);
+
+        for (DataField field : sourceSchema.fields()) {
+            String fieldName =
+                    columnCaseConvertAndDuplicateCheck(
+                            field.name(), existedFields, caseSensitive, columnDuplicateErrMsg);
+            builder.column(fieldName, field.type(), field.description());
+        }
 
         for (ComputedColumn computedColumn : computedColumns) {
-            builder.column(computedColumn.columnName(), computedColumn.columnType());
+            String computedColumnName =
+                    columnCaseConvertAndDuplicateCheck(
+                            computedColumn.columnName(),
+                            existedFields,
+                            caseSensitive,
+                            columnDuplicateErrMsg);
+            builder.column(computedColumnName, computedColumn.columnType());
         }
 
         for (CdcMetadataConverter metadataConverter : metadataConverters) {
-            builder.column(metadataConverter.columnName(), metadataConverter.dataType());
+            String metadataColumnName =
+                    columnCaseConvertAndDuplicateCheck(
+                            metadataConverter.columnName(),
+                            existedFields,
+                            caseSensitive,
+                            columnDuplicateErrMsg);
+            builder.column(metadataColumnName, metadataConverter.dataType());
         }
 
         // primary keys
         if (!specifiedPrimaryKeys.isEmpty()) {
-            Map<String, Integer> sourceColumns =
-                    sourceSchema.fields().stream()
-                            .collect(Collectors.toMap(DataField::name, entity -> 1));
+            Set<String> sourceColumns =
+                    sourceSchema.fields().stream().map(DataField::name).collect(Collectors.toSet());
+            sourceColumns.addAll(
+                    computedColumns.stream()
+                            .map(ComputedColumn::columnName)
+                            .collect(Collectors.toSet()));
             for (String key : specifiedPrimaryKeys) {
-                if (!sourceColumns.containsKey(key)
-                        && computedColumns.stream().noneMatch(c -> c.columnName().equals(key))) {
-                    throw new IllegalArgumentException(
-                            "Specified primary key '"
-                                    + key
-                                    + "' does not exist in source tables or computed columns.");
-                }
+                checkArgument(
+                        sourceColumns.contains(key),
+                        "Specified primary key '%s' does not exist in source tables or computed columns %s.",
+                        key,
+                        sourceColumns);
             }
-            builder.primaryKey(specifiedPrimaryKeys);
+            builder.primaryKey(listCaseConvert(specifiedPrimaryKeys, caseSensitive));
         } else if (!sourceSchema.primaryKeys().isEmpty()) {
-            builder.primaryKey(sourceSchema.primaryKeys());
+            builder.primaryKey(listCaseConvert(sourceSchema.primaryKeys(), caseSensitive));
         } else if (requirePrimaryKeys) {
             throw new IllegalArgumentException(
                     "Primary keys are not specified. "
@@ -217,7 +238,7 @@ public class CdcActionCommonUtils {
 
         // partition keys
         if (!specifiedPartitionKeys.isEmpty()) {
-            builder.partitionKeys(specifiedPartitionKeys);
+            builder.partitionKeys(listCaseConvert(specifiedPartitionKeys, caseSensitive));
         }
 
         // comment
@@ -282,5 +303,27 @@ public class CdcActionCommonUtils {
                         .collect(Collectors.joining("|"));
         excludingPattern = "?!" + excludingPattern;
         return String.format("(%s)(%s)", excludingPattern, includingPattern);
+    }
+
+    public static void checkRequiredOptions(
+            Configuration config, String confName, ConfigOption<?>... configOptions) {
+        for (ConfigOption<?> configOption : configOptions) {
+            checkArgument(
+                    config.contains(configOption),
+                    "%s [%s] must be specified.",
+                    confName,
+                    configOption.key());
+        }
+    }
+
+    public static void checkOneRequiredOption(
+            Configuration config, String confName, ConfigOption<?>... configOptions) {
+        checkArgument(
+                Arrays.stream(configOptions).filter(config::contains).count() == 1,
+                "%s must and can only set one of the following options: %s.",
+                confName,
+                Arrays.stream(configOptions)
+                        .map(ConfigOption::key)
+                        .collect(Collectors.joining(",")));
     }
 }

@@ -20,21 +20,18 @@ package org.apache.paimon.flink.action.cdc.mysql;
 
 import org.apache.paimon.catalog.Identifier;
 import org.apache.paimon.flink.action.Action;
-import org.apache.paimon.flink.action.cdc.CdcMetadataConverter;
+import org.apache.paimon.flink.action.cdc.SyncJobHandler;
 import org.apache.paimon.flink.action.cdc.SyncTableActionBase;
-import org.apache.paimon.flink.action.cdc.mysql.schema.MySqlSchemasInfo;
-import org.apache.paimon.flink.action.cdc.mysql.schema.MySqlTableInfo;
-import org.apache.paimon.flink.sink.cdc.RichCdcMultiplexRecord;
+import org.apache.paimon.flink.action.cdc.schema.JdbcSchemasInfo;
+import org.apache.paimon.flink.action.cdc.schema.JdbcTableInfo;
 import org.apache.paimon.schema.Schema;
 
+import com.ververica.cdc.connectors.mysql.source.MySqlSource;
 import com.ververica.cdc.connectors.mysql.source.config.MySqlSourceOptions;
-import org.apache.flink.api.common.functions.FlatMapFunction;
-import org.apache.flink.streaming.api.datastream.DataStreamSource;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -74,7 +71,7 @@ import static org.apache.paimon.utils.Preconditions.checkArgument;
  */
 public class MySqlSyncTableAction extends SyncTableActionBase {
 
-    private MySqlSchemasInfo mySqlSchemasInfo;
+    private JdbcSchemasInfo mySqlSchemasInfo;
 
     public MySqlSyncTableAction(
             String warehouse,
@@ -82,64 +79,36 @@ public class MySqlSyncTableAction extends SyncTableActionBase {
             String table,
             Map<String, String> catalogConfig,
             Map<String, String> mySqlConfig) {
-        super(warehouse, database, table, catalogConfig, mySqlConfig);
-        MySqlActionUtils.registerJdbcDriver();
-    }
-
-    @Override
-    protected Optional<CdcMetadataConverter<?>> metadataConverter(String column) {
-        return Optional.of(MySqlMetadataProcessor.converter(column));
-    }
-
-    @Override
-    protected void checkCdcSourceArgument() {
-        checkArgument(
-                cdcSourceConfig.contains(MySqlSourceOptions.TABLE_NAME),
-                String.format(
-                        "mysql-conf [%s] must be specified.", MySqlSourceOptions.TABLE_NAME.key()));
+        super(
+                warehouse,
+                database,
+                table,
+                catalogConfig,
+                mySqlConfig,
+                SyncJobHandler.SourceType.MYSQL);
     }
 
     @Override
     protected Schema retrieveSchema() throws Exception {
         this.mySqlSchemasInfo =
                 MySqlActionUtils.getMySqlTableInfos(
-                        cdcSourceConfig,
-                        monitorTablePredication(),
-                        new ArrayList<>(),
-                        typeMapping,
-                        catalog.caseSensitive());
+                        cdcSourceConfig, monitorTablePredication(), new ArrayList<>(), typeMapping);
         validateMySqlTableInfos(mySqlSchemasInfo);
-        MySqlTableInfo tableInfo = mySqlSchemasInfo.mergeAll();
+        JdbcTableInfo tableInfo = mySqlSchemasInfo.mergeAll();
         return tableInfo.schema();
     }
 
     @Override
-    protected DataStreamSource<String> buildSource() throws Exception {
+    protected MySqlSource<String> buildSource() {
         String tableList =
                 mySqlSchemasInfo.pkTables().stream()
+                        .map(JdbcSchemasInfo.JdbcSchemaInfo::identifier)
                         .map(i -> i.getDatabaseName() + "\\." + i.getObjectName())
                         .collect(Collectors.joining("|"));
-        return buildDataStreamSource(MySqlActionUtils.buildMySqlSource(cdcSourceConfig, tableList));
+        return MySqlActionUtils.buildMySqlSource(cdcSourceConfig, tableList, typeMapping);
     }
 
-    @Override
-    protected String sourceName() {
-        return "MySQL Source";
-    }
-
-    @Override
-    protected FlatMapFunction<String, RichCdcMultiplexRecord> recordParse() {
-        boolean caseSensitive = catalog.caseSensitive();
-        return new MySqlRecordParser(
-                cdcSourceConfig, caseSensitive, computedColumns, typeMapping, metadataConverters);
-    }
-
-    @Override
-    protected String jobName() {
-        return String.format("MySQL-Paimon Table Sync: %s.%s", database, table);
-    }
-
-    private void validateMySqlTableInfos(MySqlSchemasInfo mySqlSchemasInfo) {
+    private void validateMySqlTableInfos(JdbcSchemasInfo mySqlSchemasInfo) {
         List<Identifier> nonPkTables = mySqlSchemasInfo.nonPkTables();
         checkArgument(
                 nonPkTables.isEmpty(),

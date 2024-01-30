@@ -20,8 +20,8 @@ package org.apache.paimon.flink.action.cdc.mysql;
 
 import org.apache.paimon.catalog.Identifier;
 import org.apache.paimon.flink.action.cdc.TypeMapping;
-import org.apache.paimon.flink.action.cdc.mysql.schema.MySqlSchemaUtils;
-import org.apache.paimon.flink.action.cdc.mysql.schema.MySqlSchemasInfo;
+import org.apache.paimon.flink.action.cdc.schema.JdbcSchemaUtils;
+import org.apache.paimon.flink.action.cdc.schema.JdbcSchemasInfo;
 import org.apache.paimon.schema.Schema;
 
 import com.ververica.cdc.connectors.mysql.source.MySqlSource;
@@ -29,10 +29,10 @@ import com.ververica.cdc.connectors.mysql.source.MySqlSourceBuilder;
 import com.ververica.cdc.connectors.mysql.source.config.MySqlSourceOptions;
 import com.ververica.cdc.connectors.mysql.source.offset.BinlogOffset;
 import com.ververica.cdc.connectors.mysql.source.offset.BinlogOffsetBuilder;
-import com.ververica.cdc.connectors.mysql.table.JdbcUrlUtils;
 import com.ververica.cdc.connectors.mysql.table.StartupOptions;
 import com.ververica.cdc.debezium.JsonDebeziumDeserializationSchema;
 import com.ververica.cdc.debezium.table.DebeziumOptions;
+import com.ververica.cdc.debezium.utils.JdbcUrlUtils;
 import org.apache.flink.configuration.ConfigOption;
 import org.apache.flink.configuration.ConfigOptions;
 import org.apache.flink.configuration.Configuration;
@@ -51,9 +51,11 @@ import java.util.Properties;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import static org.apache.paimon.flink.action.cdc.TypeMapping.TypeMappingMode.TINYINT1_NOT_BOOL;
-import static org.apache.paimon.utils.Preconditions.checkArgument;
+import static org.apache.paimon.flink.action.cdc.mysql.MySqlTypeUtils.toPaimonTypeVisitor;
+import static org.apache.paimon.options.OptionsUtils.convertToPropertiesPrefixKey;
 
 /** Utils for MySQL Action. */
 public class MySqlActionUtils {
@@ -67,17 +69,25 @@ public class MySqlActionUtils {
                     .withDescription(
                             "Whether capture the scan the newly added tables or not, by default is true.");
 
-    static Connection getConnection(Configuration mySqlConfig, boolean tinyint1NotBool)
+    static Connection getConnection(Configuration mySqlConfig, Map<String, String> jdbcProperties)
             throws Exception {
+        String paramString = "";
+        if (!jdbcProperties.isEmpty()) {
+            paramString =
+                    "?"
+                            + jdbcProperties.entrySet().stream()
+                                    .map(e -> e.getKey() + "=" + e.getValue())
+                                    .collect(Collectors.joining("&"));
+        }
+
         String url =
                 String.format(
                         "jdbc:mysql://%s:%d%s",
                         mySqlConfig.get(MySqlSourceOptions.HOSTNAME),
                         mySqlConfig.get(MySqlSourceOptions.PORT),
-                        // we need to add the `tinyInt1isBit` parameter to the connection url to
-                        // make sure the tinyint(1) in MySQL is converted to bits or not. Refer to
-                        // https://dev.mysql.com/doc/connector-j/8.0/en/connector-j-connp-props-result-sets.html#cj-conn-prop_tinyInt1isBit
-                        tinyint1NotBool ? "?tinyInt1isBit=false" : "");
+                        paramString);
+
+        LOG.info("Connect to MySQL server using url: {}", url);
 
         return DriverManager.getConnection(
                 url,
@@ -85,43 +95,44 @@ public class MySqlActionUtils {
                 mySqlConfig.get(MySqlSourceOptions.PASSWORD));
     }
 
-    public static MySqlSchemasInfo getMySqlTableInfos(
+    public static JdbcSchemasInfo getMySqlTableInfos(
             Configuration mySqlConfig,
             Predicate<String> monitorTablePredication,
             List<Identifier> excludedTables,
-            TypeMapping typeMapping,
-            boolean caseSensitive)
+            TypeMapping typeMapping)
             throws Exception {
         Pattern databasePattern =
                 Pattern.compile(mySqlConfig.get(MySqlSourceOptions.DATABASE_NAME));
-        MySqlSchemasInfo mySqlSchemasInfo = new MySqlSchemasInfo();
-        try (Connection conn =
-                MySqlActionUtils.getConnection(
-                        mySqlConfig, typeMapping.containsMode(TINYINT1_NOT_BOOL))) {
+        JdbcSchemasInfo mySqlSchemasInfo = new JdbcSchemasInfo();
+        Map<String, String> jdbcProperties = getJdbcProperties(typeMapping, mySqlConfig);
+
+        try (Connection conn = MySqlActionUtils.getConnection(mySqlConfig, jdbcProperties)) {
             DatabaseMetaData metaData = conn.getMetaData();
             try (ResultSet schemas = metaData.getCatalogs()) {
                 while (schemas.next()) {
                     String databaseName = schemas.getString("TABLE_CAT");
                     Matcher databaseMatcher = databasePattern.matcher(databaseName);
-                    if (databaseMatcher.matches()) {
-                        try (ResultSet tables = metaData.getTables(databaseName, null, "%", null)) {
-                            while (tables.next()) {
-                                String tableName = tables.getString("TABLE_NAME");
-                                String tableComment = tables.getString("REMARKS");
+                    if (!databaseMatcher.matches()) {
+                        continue;
+                    }
+                    try (ResultSet tables =
+                            metaData.getTables(databaseName, null, "%", new String[] {"TABLE"})) {
+                        while (tables.next()) {
+                            String tableName = tables.getString("TABLE_NAME");
+                            String tableComment = tables.getString("REMARKS");
+                            Identifier identifier = Identifier.create(databaseName, tableName);
+                            if (monitorTablePredication.test(tableName)) {
                                 Schema schema =
-                                        MySqlSchemaUtils.buildSchema(
+                                        JdbcSchemaUtils.buildSchema(
                                                 metaData,
                                                 databaseName,
                                                 tableName,
                                                 tableComment,
                                                 typeMapping,
-                                                caseSensitive);
-                                Identifier identifier = Identifier.create(databaseName, tableName);
-                                if (monitorTablePredication.test(tableName)) {
-                                    mySqlSchemasInfo.addSchema(identifier, schema);
-                                } else {
-                                    excludedTables.add(identifier);
-                                }
+                                                toPaimonTypeVisitor());
+                                mySqlSchemasInfo.addSchema(identifier, schema);
+                            } else {
+                                excludedTables.add(identifier);
                             }
                         }
                     }
@@ -132,8 +143,7 @@ public class MySqlActionUtils {
     }
 
     public static MySqlSource<String> buildMySqlSource(
-            Configuration mySqlConfig, String tableList) {
-        validateMySqlConfig(mySqlConfig);
+            Configuration mySqlConfig, String tableList, TypeMapping typeMapping) {
         MySqlSourceBuilder<String> sourceBuilder = MySqlSource.builder();
 
         sourceBuilder
@@ -199,18 +209,13 @@ public class MySqlActionUtils {
         }
 
         Properties jdbcProperties = new Properties();
-        Properties debeziumProperties = new Properties();
-        for (Map.Entry<String, String> entry : mySqlConfig.toMap().entrySet()) {
-            String key = entry.getKey();
-            String value = entry.getValue();
-            if (key.startsWith(JdbcUrlUtils.PROPERTIES_PREFIX)) {
-                jdbcProperties.put(key.substring(JdbcUrlUtils.PROPERTIES_PREFIX.length()), value);
-            } else if (key.startsWith(DebeziumOptions.DEBEZIUM_OPTIONS_PREFIX)) {
-                debeziumProperties.put(
-                        key.substring(DebeziumOptions.DEBEZIUM_OPTIONS_PREFIX.length()), value);
-            }
-        }
+        jdbcProperties.putAll(getJdbcProperties(typeMapping, mySqlConfig));
         sourceBuilder.jdbcProperties(jdbcProperties);
+
+        Properties debeziumProperties = new Properties();
+        debeziumProperties.putAll(
+                convertToPropertiesPrefixKey(
+                        mySqlConfig.toMap(), DebeziumOptions.DEBEZIUM_OPTIONS_PREFIX));
         sourceBuilder.debeziumProperties(debeziumProperties);
 
         Map<String, Object> customConverterConfigs = new HashMap<>();
@@ -227,6 +232,28 @@ public class MySqlActionUtils {
                 .build();
     }
 
+    // see
+    // https://ververica.github.io/flink-cdc-connectors/master/content/connectors/mysql-cdc.html#connector-options
+    // https://dev.mysql.com/doc/connectors/en/connector-j-reference-configuration-properties.html
+    private static Map<String, String> getJdbcProperties(
+            TypeMapping typeMapping, Configuration mySqlConfig) {
+        Map<String, String> jdbcProperties =
+                convertToPropertiesPrefixKey(mySqlConfig.toMap(), JdbcUrlUtils.PROPERTIES_PREFIX);
+
+        if (typeMapping.containsMode(TINYINT1_NOT_BOOL)) {
+            String tinyInt1isBit = jdbcProperties.get("tinyInt1isBit");
+            if (tinyInt1isBit == null) {
+                jdbcProperties.put("tinyInt1isBit", "false");
+            } else if ("true".equals(jdbcProperties.get("tinyInt1isBit"))) {
+                throw new IllegalArgumentException(
+                        "Type mapping option 'tinyint1-not-bool' conflicts with jdbc properties 'jdbc.properties.tinyInt1isBit=true'. "
+                                + "Option 'tinyint1-not-bool' is equal to 'jdbc.properties.tinyInt1isBit=false'.");
+            }
+        }
+
+        return jdbcProperties;
+    }
+
     public static void registerJdbcDriver() {
         try {
             Class.forName("com.mysql.cj.jdbc.Driver");
@@ -240,28 +267,5 @@ public class MySqlActionUtils {
                         "No suitable driver found. Cannot find class com.mysql.cj.jdbc.Driver and com.mysql.jdbc.Driver.");
             }
         }
-    }
-
-    private static void validateMySqlConfig(Configuration mySqlConfig) {
-        checkArgument(
-                mySqlConfig.get(MySqlSourceOptions.HOSTNAME) != null,
-                String.format(
-                        "mysql-conf [%s] must be specified.", MySqlSourceOptions.HOSTNAME.key()));
-
-        checkArgument(
-                mySqlConfig.get(MySqlSourceOptions.USERNAME) != null,
-                String.format(
-                        "mysql-conf [%s] must be specified.", MySqlSourceOptions.USERNAME.key()));
-
-        checkArgument(
-                mySqlConfig.get(MySqlSourceOptions.PASSWORD) != null,
-                String.format(
-                        "mysql-conf [%s] must be specified.", MySqlSourceOptions.PASSWORD.key()));
-
-        checkArgument(
-                mySqlConfig.get(MySqlSourceOptions.DATABASE_NAME) != null,
-                String.format(
-                        "mysql-conf [%s] must be specified.",
-                        MySqlSourceOptions.DATABASE_NAME.key()));
     }
 }

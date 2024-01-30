@@ -32,6 +32,7 @@ import org.apache.paimon.table.source.snapshot.ContinuousFromSnapshotFullStartin
 import org.apache.paimon.table.source.snapshot.ContinuousFromSnapshotStartingScanner;
 import org.apache.paimon.table.source.snapshot.ContinuousFromTimestampStartingScanner;
 import org.apache.paimon.table.source.snapshot.ContinuousLatestStartingScanner;
+import org.apache.paimon.table.source.snapshot.FileCreationTimeStartingScanner;
 import org.apache.paimon.table.source.snapshot.FullCompactedStartingScanner;
 import org.apache.paimon.table.source.snapshot.FullStartingScanner;
 import org.apache.paimon.table.source.snapshot.IncrementalStartingScanner;
@@ -47,6 +48,7 @@ import org.apache.paimon.utils.Pair;
 import org.apache.paimon.utils.SnapshotManager;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.apache.paimon.CoreOptions.FULL_COMPACTION_DELTA_COMMITS;
@@ -69,8 +71,21 @@ public abstract class AbstractInnerTableScan implements InnerTableScan {
         return this;
     }
 
+    @Override
     public AbstractInnerTableScan withBucketFilter(Filter<Integer> bucketFilter) {
         snapshotReader.withBucketFilter(bucketFilter);
+        return this;
+    }
+
+    @Override
+    public AbstractInnerTableScan withPartitionFilter(Map<String, String> partitionSpec) {
+        snapshotReader.withPartitionFilter(partitionSpec);
+        return this;
+    }
+
+    @Override
+    public AbstractInnerTableScan withLevelFilter(Filter<Integer> levelFilter) {
+        snapshotReader.withLevelFilter(levelFilter);
         return this;
     }
 
@@ -99,7 +114,7 @@ public abstract class AbstractInnerTableScan implements InnerTableScan {
 
         // read from consumer id
         String consumerId = options.consumerId();
-        if (consumerId != null) {
+        if (consumerId != null && !options.consumerIgnoreProgress()) {
             ConsumerManager consumerManager = snapshotReader.consumerManager();
             Optional<Consumer> consumer = consumerManager.consumer(consumerId);
             if (consumer.isPresent()) {
@@ -132,6 +147,9 @@ public abstract class AbstractInnerTableScan implements InnerTableScan {
                 return isStreaming
                         ? new ContinuousFromTimestampStartingScanner(snapshotManager, startupMillis)
                         : new StaticFromTimestampStartingScanner(snapshotManager, startupMillis);
+            case FROM_FILE_CREATION_TIME:
+                Long fileCreationTimeMills = options.scanFileCreationTimeMills();
+                return new FileCreationTimeStartingScanner(snapshotManager, fileCreationTimeMills);
             case FROM_SNAPSHOT:
                 if (options.scanSnapshotId() != null) {
                     return isStreaming

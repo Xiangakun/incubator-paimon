@@ -18,6 +18,7 @@
 
 package org.apache.paimon.flink;
 
+import org.apache.paimon.catalog.Catalog;
 import org.apache.paimon.catalog.CatalogContext;
 import org.apache.paimon.catalog.CatalogFactory;
 import org.apache.paimon.catalog.Identifier;
@@ -25,7 +26,7 @@ import org.apache.paimon.data.BinaryRow;
 import org.apache.paimon.fs.Path;
 import org.apache.paimon.index.IndexFileHandler;
 import org.apache.paimon.manifest.IndexManifestEntry;
-import org.apache.paimon.table.AbstractFileStoreTable;
+import org.apache.paimon.table.FileStoreTable;
 
 import org.apache.flink.types.Row;
 import org.assertj.core.api.Assertions;
@@ -81,10 +82,20 @@ public class DynamicBucketTableITCase extends CatalogITCaseBase {
     @Test
     public void testWriteWithAssignerParallelism() {
         sql(
-                "INSERT INTO T /*+ OPTIONS('dynamic-bucket.assigner-parallelism'='3') */ "
+                "INSERT INTO T /*+ OPTIONS('dynamic-bucket.initial-buckets'='3') */ "
+                        + "VALUES (1, 1, 1), (1, 2, 2), (1, 3, 3), (1, 4, 4), (1, 5, 5)");
+        // initial-buckets is 3, but parallelism is 2, will use 2
+        assertThat(sql("SELECT DISTINCT bucket FROM T$files"))
+                .containsExactlyInAnyOrder(Row.of(0), Row.of(1));
+    }
+
+    @Test
+    public void testWriteWithAssignerParallelism1() {
+        sql(
+                "INSERT INTO T /*+ OPTIONS('dynamic-bucket.initial-buckets'='1') */ "
                         + "VALUES (1, 1, 1), (1, 2, 2), (1, 3, 3), (1, 4, 4), (1, 5, 5)");
         assertThat(sql("SELECT DISTINCT bucket FROM T$files"))
-                .containsExactlyInAnyOrder(Row.of(0), Row.of(1), Row.of(2));
+                .containsExactlyInAnyOrder(Row.of(0), Row.of(1));
     }
 
     @Test
@@ -101,10 +112,9 @@ public class DynamicBucketTableITCase extends CatalogITCaseBase {
         // overwrite the whole table, we should update the index file by this sql
         sql("INSERT OVERWRITE T SELECT * FROM T LIMIT 4");
 
-        AbstractFileStoreTable table =
-                (AbstractFileStoreTable)
-                        (CatalogFactory.createCatalog(CatalogContext.create(new Path(path))))
-                                .getTable(Identifier.create("default", "T"));
+        Catalog catalog = CatalogFactory.createCatalog(CatalogContext.create(new Path(path)));
+
+        FileStoreTable table = (FileStoreTable) catalog.getTable(Identifier.create("default", "T"));
         IndexFileHandler indexFileHandler = table.store().newIndexFileHandler();
         List<BinaryRow> partitions = table.newScan().listPartitions();
         List<IndexManifestEntry> entries = new ArrayList<>();
@@ -113,5 +123,7 @@ public class DynamicBucketTableITCase extends CatalogITCaseBase {
         Long records =
                 entries.stream().map(entry -> entry.indexFile().rowCount()).reduce(Long::sum).get();
         Assertions.assertThat(records).isEqualTo(4);
+
+        catalog.close();
     }
 }

@@ -23,6 +23,7 @@
 
 package org.apache.paimon.flink.action.cdc.mysql;
 
+import org.apache.paimon.flink.action.cdc.JdbcToPaimonTypeVisitor;
 import org.apache.paimon.flink.action.cdc.TypeMapping;
 import org.apache.paimon.types.DataType;
 import org.apache.paimon.types.DataTypes;
@@ -45,6 +46,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import static org.apache.paimon.flink.action.cdc.TypeMapping.TypeMappingMode.BIGINT_UNSIGNED_TO_BIGINT;
 import static org.apache.paimon.flink.action.cdc.TypeMapping.TypeMappingMode.CHAR_TO_STRING;
 import static org.apache.paimon.flink.action.cdc.TypeMapping.TypeMappingMode.LONGTEXT_TO_BYTES;
 import static org.apache.paimon.flink.action.cdc.TypeMapping.TypeMappingMode.TINYINT1_NOT_BOOL;
@@ -207,7 +209,9 @@ public class MySqlTypeUtils {
             case BIGINT_UNSIGNED:
             case BIGINT_UNSIGNED_ZEROFILL:
             case SERIAL:
-                return DataTypes.DECIMAL(20, 0);
+                return typeMapping.containsMode(BIGINT_UNSIGNED_TO_BIGINT)
+                        ? DataTypes.BIGINT()
+                        : DataTypes.DECIMAL(20, 0);
             case FLOAT:
             case FLOAT_UNSIGNED:
             case FLOAT_UNSIGNED_ZEROFILL:
@@ -409,6 +413,24 @@ public class MySqlTypeUtils {
             // When missing scale of the decimal, we
             // use the max scale to avoid parse error
             return isDecimalType(typeName) ? 18 : 0;
+        }
+    }
+
+    public static JdbcToPaimonTypeVisitor toPaimonTypeVisitor() {
+        return MySqlToPaimonTypeVisitor.INSTANCE;
+    }
+
+    private static class MySqlToPaimonTypeVisitor implements JdbcToPaimonTypeVisitor {
+
+        private static final MySqlToPaimonTypeVisitor INSTANCE = new MySqlToPaimonTypeVisitor();
+
+        @Override
+        public DataType visit(
+                String type,
+                @Nullable Integer length,
+                @Nullable Integer scale,
+                TypeMapping typeMapping) {
+            return toDataType(type, length, scale, typeMapping);
         }
     }
 }

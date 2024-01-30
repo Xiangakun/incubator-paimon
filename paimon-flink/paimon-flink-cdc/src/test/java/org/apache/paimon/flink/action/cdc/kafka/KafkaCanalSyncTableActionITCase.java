@@ -18,6 +18,8 @@
 
 package org.apache.paimon.flink.action.cdc.kafka;
 
+import org.apache.paimon.CoreOptions;
+import org.apache.paimon.catalog.FileSystemCatalogOptions;
 import org.apache.paimon.table.FileStoreTable;
 import org.apache.paimon.types.DataType;
 import org.apache.paimon.types.DataTypes;
@@ -26,12 +28,15 @@ import org.apache.paimon.types.RowType;
 import org.apache.flink.core.execution.JobClient;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 import static org.apache.flink.streaming.connectors.kafka.table.KafkaConnectorOptions.SCAN_STARTUP_MODE;
 import static org.apache.flink.streaming.connectors.kafka.table.KafkaConnectorOptions.SCAN_STARTUP_SPECIFIC_OFFSETS;
@@ -42,6 +47,7 @@ import static org.apache.flink.streaming.connectors.kafka.table.KafkaConnectorOp
 import static org.apache.flink.streaming.connectors.kafka.table.KafkaConnectorOptions.ScanStartupMode.SPECIFIC_OFFSETS;
 import static org.apache.flink.streaming.connectors.kafka.table.KafkaConnectorOptions.ScanStartupMode.TIMESTAMP;
 import static org.apache.flink.streaming.connectors.kafka.table.KafkaConnectorOptions.TOPIC;
+import static org.apache.flink.streaming.connectors.kafka.table.KafkaConnectorOptions.TOPIC_PATTERN;
 import static org.apache.flink.streaming.connectors.kafka.table.KafkaConnectorOptions.VALUE_FORMAT;
 import static org.apache.paimon.flink.action.cdc.TypeMapping.TypeMappingMode.TO_STRING;
 import static org.apache.paimon.testutils.assertj.AssertionUtils.anyCauseMatches;
@@ -49,7 +55,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** IT cases for {@link KafkaSyncTableAction}. */
-public class KafkaCanalSyncTableActionITCase extends KafkaActionITCaseBase {
+public class KafkaCanalSyncTableActionITCase extends KafkaSyncTableActionITCase {
+
+    private static final String CANAL = "canal";
 
     @Test
     @Timeout(60)
@@ -235,7 +243,11 @@ public class KafkaCanalSyncTableActionITCase extends KafkaActionITCaseBase {
         Map<String, String> kafkaConfig = getBasicKafkaConfig();
         kafkaConfig.put(VALUE_FORMAT.key(), "canal-json");
 
-        kafkaConfig.put(TOPIC.key(), topic);
+        if (ThreadLocalRandom.current().nextBoolean()) {
+            kafkaConfig.put(TOPIC.key(), topic);
+        } else {
+            kafkaConfig.put(TOPIC_PATTERN.key(), "schema_evolution_.+");
+        }
         KafkaSyncTableAction action =
                 syncTableActionBuilder(kafkaConfig).withPrimaryKeys("_id").build();
         runActionWithDefaultEnv(action);
@@ -700,7 +712,7 @@ public class KafkaCanalSyncTableActionITCase extends KafkaActionITCaseBase {
     }
 
     @Test
-    @Timeout(60)
+    @Timeout(120)
     public void testStarUpOptionLatest() throws Exception {
         final String topic = "start_up_latest";
         createTestTopic(topic, 1, 1);
@@ -968,10 +980,11 @@ public class KafkaCanalSyncTableActionITCase extends KafkaActionITCaseBase {
                 .containsExactlyEntriesOf(Collections.singletonMap("table-key", "table-value"));
     }
 
-    @Test
+    @ParameterizedTest(name = "ignore-delete = {0}")
+    @ValueSource(booleans = {true, false})
     @Timeout(60)
-    public void testCDCOperations() throws Exception {
-        final String topic = "event-insert";
+    public void testCDCOperations(boolean ignoreDelete) throws Exception {
+        final String topic = "event-insert" + UUID.randomUUID();
         createTestTopic(topic, 1, 1);
 
         // ---------- Write the Canal json into Kafka -------------------
@@ -981,8 +994,11 @@ public class KafkaCanalSyncTableActionITCase extends KafkaActionITCaseBase {
         kafkaConfig.put(VALUE_FORMAT.key(), "canal-json");
         kafkaConfig.put(TOPIC.key(), topic);
 
+        Map<String, String> tableConfig = getBasicTableConfig();
+        tableConfig.put(CoreOptions.DEDUPLICATE_IGNORE_DELETE.key(), String.valueOf(ignoreDelete));
+
         KafkaSyncTableAction action =
-                syncTableActionBuilder(kafkaConfig).withTableConfig(getBasicTableConfig()).build();
+                syncTableActionBuilder(kafkaConfig).withTableConfig(tableConfig).build();
         runActionWithDefaultEnv(action);
 
         FileStoreTable table = getFileStoreTable(tableName);
@@ -1032,10 +1048,12 @@ public class KafkaCanalSyncTableActionITCase extends KafkaActionITCaseBase {
 
         // For the DELETE operation
         List<String> expectedDelete =
-                Arrays.asList(
-                        "+I[1, 2, second, NULL, NULL, NULL, NULL]",
-                        "+I[1, 9, nine, 90000000000, 99999.999, [110, 105, 110, 101, 46, 98, 105, 110], 9.9]",
-                        "+I[2, 4, four, NULL, NULL, NULL, NULL]");
+                ignoreDelete
+                        ? expectedUpdate
+                        : Arrays.asList(
+                                "+I[1, 2, second, NULL, NULL, NULL, NULL]",
+                                "+I[1, 9, nine, 90000000000, 99999.999, [110, 105, 110, 101, 46, 98, 105, 110], 9.9]",
+                                "+I[2, 4, four, NULL, NULL, NULL, NULL]");
         waitForResult(expectedDelete, table, rowType, primaryKeys);
     }
 
@@ -1170,5 +1188,65 @@ public class KafkaCanalSyncTableActionITCase extends KafkaActionITCaseBase {
                 getFileStoreTable(tableName),
                 rowType,
                 Collections.singletonList("k"));
+    }
+
+    @ParameterizedTest(name = "triggerSchemaRetrievalException = {0}")
+    @ValueSource(booleans = {true, false})
+    @Timeout(60)
+    public void testComputedColumnWithCaseInsensitive(boolean triggerSchemaRetrievalException)
+            throws Exception {
+        String topic = "computed_column_with_case_insensitive" + UUID.randomUUID();
+        createTestTopic(topic, 1, 1);
+
+        if (triggerSchemaRetrievalException) {
+            createFileStoreTable(
+                    RowType.of(
+                            new DataType[] {
+                                DataTypes.INT().notNull(), DataTypes.DATE(), DataTypes.INT(),
+                            },
+                            new String[] {"_id", "_date", "_year"}),
+                    Collections.emptyList(),
+                    Collections.singletonList("_id"),
+                    Collections.emptyMap());
+        } else {
+            List<String> lines = readLines("kafka/canal/table/computedcolumn/canal-data-2.txt");
+            writeRecordsToKafka(topic, lines);
+        }
+
+        Map<String, String> kafkaConfig = getBasicKafkaConfig();
+        kafkaConfig.put(VALUE_FORMAT.key(), "canal-json");
+        kafkaConfig.put(TOPIC.key(), topic);
+        KafkaSyncTableAction action =
+                syncTableActionBuilder(kafkaConfig)
+                        .withTableConfig(getBasicTableConfig())
+                        .withCatalogConfig(
+                                Collections.singletonMap(
+                                        FileSystemCatalogOptions.CASE_SENSITIVE.key(), "false"))
+                        .withComputedColumnArgs("_YEAR=year(_DATE)")
+                        .build();
+        runActionWithDefaultEnv(action);
+
+        if (triggerSchemaRetrievalException) {
+            List<String> lines = readLines("kafka/canal/table/computedcolumn/canal-data-2.txt");
+            writeRecordsToKafka(topic, lines);
+        }
+
+        RowType rowType =
+                RowType.of(
+                        new DataType[] {
+                            DataTypes.INT().notNull(), DataTypes.DATE(), DataTypes.INT()
+                        },
+                        new String[] {"_id", "_date", "_year"});
+        waitForResult(
+                Arrays.asList("+I[1, 19439, 2023]", "+I[2, NULL, NULL]"),
+                getFileStoreTable(tableName),
+                rowType,
+                Collections.singletonList("_id"));
+    }
+
+    @Test
+    @Timeout(60)
+    public void testWaterMarkSyncTable() throws Exception {
+        testWaterMarkSyncTable(CANAL);
     }
 }

@@ -17,8 +17,16 @@
  */
 package org.apache.paimon.spark
 
+import org.apache.paimon.predicate.Predicate
 import org.apache.paimon.table.Table
-import org.apache.paimon.table.source.ReadBuilder
 
-case class PaimonScan(table: Table, readBuilder: ReadBuilder)
-  extends PaimonBaseScan(table, readBuilder)
+import org.apache.spark.sql.sources.Filter
+import org.apache.spark.sql.types.StructType
+
+case class PaimonScan(
+    table: Table,
+    requiredSchema: StructType,
+    filters: Array[Predicate],
+    reservedFilters: Array[Filter],
+    pushDownLimit: Option[Int])
+  extends PaimonBaseScan(table, requiredSchema, filters, reservedFilters, pushDownLimit)

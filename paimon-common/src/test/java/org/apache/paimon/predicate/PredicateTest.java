@@ -18,6 +18,7 @@
 
 package org.apache.paimon.predicate;
 
+import org.apache.paimon.data.GenericRow;
 import org.apache.paimon.format.FieldStats;
 import org.apache.paimon.types.IntType;
 import org.apache.paimon.types.RowType;
@@ -28,6 +29,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+import static org.apache.paimon.predicate.FieldStatsUtils.test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** Test for {@link Predicate}s. */
@@ -38,14 +40,15 @@ public class PredicateTest {
         PredicateBuilder builder = new PredicateBuilder(RowType.of(new IntType()));
         Predicate predicate = builder.equal(0, 5);
 
-        assertThat(predicate.test(new Object[] {4})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {5})).isEqualTo(true);
-        assertThat(predicate.test(new Object[] {null})).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(4))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(5))).isEqualTo(true);
+        assertThat(predicate.test(GenericRow.of((Object) null))).isEqualTo(false);
 
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(0, 5, 0L)})).isEqualTo(true);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(0, 6, 0L)})).isEqualTo(true);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(6, 7, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(1, new FieldStats[] {new FieldStats(null, null, 1L)}))
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(0, 5, 0L)})).isEqualTo(true);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(0, 6, 0L)})).isEqualTo(true);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(6, 7, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 1, new FieldStats[] {new FieldStats(null, null, 1L)}))
                 .isEqualTo(false);
 
         assertThat(predicate.negate().orElse(null)).isEqualTo(builder.notEqual(0, 5));
@@ -56,11 +59,12 @@ public class PredicateTest {
         PredicateBuilder builder = new PredicateBuilder(RowType.of(new IntType()));
         Predicate predicate = builder.equal(0, null);
 
-        assertThat(predicate.test(new Object[] {4})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {null})).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(4))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of((Object) null))).isEqualTo(false);
 
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(0, 5, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(1, new FieldStats[] {new FieldStats(null, null, 1L)}))
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(0, 5, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 1, new FieldStats[] {new FieldStats(null, null, 1L)}))
                 .isEqualTo(false);
     }
 
@@ -69,15 +73,16 @@ public class PredicateTest {
         PredicateBuilder builder = new PredicateBuilder(RowType.of(new IntType()));
         Predicate predicate = builder.notEqual(0, 5);
 
-        assertThat(predicate.test(new Object[] {4})).isEqualTo(true);
-        assertThat(predicate.test(new Object[] {5})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {null})).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(4))).isEqualTo(true);
+        assertThat(predicate.test(GenericRow.of(5))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of((Object) null))).isEqualTo(false);
 
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(0, 5, 0L)})).isEqualTo(true);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(0, 6, 0L)})).isEqualTo(true);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(6, 7, 0L)})).isEqualTo(true);
-        assertThat(predicate.test(1, new FieldStats[] {new FieldStats(5, 5, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(1, new FieldStats[] {new FieldStats(null, null, 1L)}))
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(0, 5, 0L)})).isEqualTo(true);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(0, 6, 0L)})).isEqualTo(true);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(6, 7, 0L)})).isEqualTo(true);
+        assertThat(test(predicate, 1, new FieldStats[] {new FieldStats(5, 5, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 1, new FieldStats[] {new FieldStats(null, null, 1L)}))
                 .isEqualTo(false);
 
         assertThat(predicate.negate().orElse(null)).isEqualTo(builder.equal(0, 5));
@@ -88,11 +93,12 @@ public class PredicateTest {
         PredicateBuilder builder = new PredicateBuilder(RowType.of(new IntType()));
         Predicate predicate = builder.notEqual(0, null);
 
-        assertThat(predicate.test(new Object[] {4})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {null})).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(4))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of((Object) null))).isEqualTo(false);
 
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(0, 5, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(1, new FieldStats[] {new FieldStats(null, null, 1L)}))
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(0, 5, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 1, new FieldStats[] {new FieldStats(null, null, 1L)}))
                 .isEqualTo(false);
     }
 
@@ -101,16 +107,18 @@ public class PredicateTest {
         PredicateBuilder builder = new PredicateBuilder(RowType.of(new IntType()));
         Predicate predicate = builder.greaterThan(0, 5);
 
-        assertThat(predicate.test(new Object[] {4})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {5})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {6})).isEqualTo(true);
-        assertThat(predicate.test(new Object[] {null})).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(4))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(5))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(6))).isEqualTo(true);
+        assertThat(predicate.test(GenericRow.of((Object) null))).isEqualTo(false);
 
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(0, 4, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(0, 5, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(0, 6, 0L)})).isEqualTo(true);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(6, 7, 0L)})).isEqualTo(true);
-        assertThat(predicate.test(1, new FieldStats[] {new FieldStats(null, null, 1L)}))
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(0, 4, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(0, 5, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(0, 6, 0L)})).isEqualTo(true);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(6, 7, 0L)})).isEqualTo(true);
+        assertThat(test(predicate, 1, new FieldStats[] {new FieldStats(null, null, 1L)}))
                 .isEqualTo(false);
 
         assertThat(predicate.negate().orElse(null)).isEqualTo(builder.lessOrEqual(0, 5));
@@ -121,11 +129,12 @@ public class PredicateTest {
         PredicateBuilder builder = new PredicateBuilder(RowType.of(new IntType()));
         Predicate predicate = builder.greaterThan(0, null);
 
-        assertThat(predicate.test(new Object[] {4})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {null})).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(4))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of((Object) null))).isEqualTo(false);
 
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(0, 4, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(1, new FieldStats[] {new FieldStats(null, null, 1L)}))
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(0, 4, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 1, new FieldStats[] {new FieldStats(null, null, 1L)}))
                 .isEqualTo(false);
     }
 
@@ -134,16 +143,17 @@ public class PredicateTest {
         PredicateBuilder builder = new PredicateBuilder(RowType.of(new IntType()));
         Predicate predicate = builder.greaterOrEqual(0, 5);
 
-        assertThat(predicate.test(new Object[] {4})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {5})).isEqualTo(true);
-        assertThat(predicate.test(new Object[] {6})).isEqualTo(true);
-        assertThat(predicate.test(new Object[] {null})).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(4))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(5))).isEqualTo(true);
+        assertThat(predicate.test(GenericRow.of(6))).isEqualTo(true);
+        assertThat(predicate.test(GenericRow.of((Object) null))).isEqualTo(false);
 
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(0, 4, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(0, 5, 0L)})).isEqualTo(true);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(0, 6, 0L)})).isEqualTo(true);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(6, 7, 0L)})).isEqualTo(true);
-        assertThat(predicate.test(1, new FieldStats[] {new FieldStats(null, null, 1L)}))
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(0, 4, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(0, 5, 0L)})).isEqualTo(true);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(0, 6, 0L)})).isEqualTo(true);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(6, 7, 0L)})).isEqualTo(true);
+        assertThat(test(predicate, 1, new FieldStats[] {new FieldStats(null, null, 1L)}))
                 .isEqualTo(false);
 
         assertThat(predicate.negate().orElse(null)).isEqualTo(builder.lessThan(0, 5));
@@ -154,11 +164,12 @@ public class PredicateTest {
         PredicateBuilder builder = new PredicateBuilder(RowType.of(new IntType()));
         Predicate predicate = builder.greaterOrEqual(0, null);
 
-        assertThat(predicate.test(new Object[] {4})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {null})).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(4))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of((Object) null))).isEqualTo(false);
 
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(0, 4, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(1, new FieldStats[] {new FieldStats(null, null, 1L)}))
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(0, 4, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 1, new FieldStats[] {new FieldStats(null, null, 1L)}))
                 .isEqualTo(false);
     }
 
@@ -167,15 +178,17 @@ public class PredicateTest {
         PredicateBuilder builder = new PredicateBuilder(RowType.of(new IntType()));
         Predicate predicate = builder.lessThan(0, 5);
 
-        assertThat(predicate.test(new Object[] {4})).isEqualTo(true);
-        assertThat(predicate.test(new Object[] {5})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {6})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {null})).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(4))).isEqualTo(true);
+        assertThat(predicate.test(GenericRow.of(5))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(6))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of((Object) null))).isEqualTo(false);
 
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(6, 7, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(5, 7, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(4, 7, 0L)})).isEqualTo(true);
-        assertThat(predicate.test(1, new FieldStats[] {new FieldStats(null, null, 1L)}))
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(6, 7, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(5, 7, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(4, 7, 0L)})).isEqualTo(true);
+        assertThat(test(predicate, 1, new FieldStats[] {new FieldStats(null, null, 1L)}))
                 .isEqualTo(false);
 
         assertThat(predicate.negate().orElse(null)).isEqualTo(builder.greaterOrEqual(0, 5));
@@ -186,11 +199,12 @@ public class PredicateTest {
         PredicateBuilder builder = new PredicateBuilder(RowType.of(new IntType()));
         Predicate predicate = builder.lessThan(0, null);
 
-        assertThat(predicate.test(new Object[] {4})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {null})).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(4))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of((Object) null))).isEqualTo(false);
 
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(6, 7, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(1, new FieldStats[] {new FieldStats(null, null, 1L)}))
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(6, 7, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 1, new FieldStats[] {new FieldStats(null, null, 1L)}))
                 .isEqualTo(false);
     }
 
@@ -199,15 +213,16 @@ public class PredicateTest {
         PredicateBuilder builder = new PredicateBuilder(RowType.of(new IntType()));
         Predicate predicate = builder.lessOrEqual(0, 5);
 
-        assertThat(predicate.test(new Object[] {4})).isEqualTo(true);
-        assertThat(predicate.test(new Object[] {5})).isEqualTo(true);
-        assertThat(predicate.test(new Object[] {6})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {null})).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(4))).isEqualTo(true);
+        assertThat(predicate.test(GenericRow.of(5))).isEqualTo(true);
+        assertThat(predicate.test(GenericRow.of(6))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of((Object) null))).isEqualTo(false);
 
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(6, 7, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(5, 7, 0L)})).isEqualTo(true);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(4, 7, 0L)})).isEqualTo(true);
-        assertThat(predicate.test(1, new FieldStats[] {new FieldStats(null, null, 1L)}))
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(6, 7, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(5, 7, 0L)})).isEqualTo(true);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(4, 7, 0L)})).isEqualTo(true);
+        assertThat(test(predicate, 1, new FieldStats[] {new FieldStats(null, null, 1L)}))
                 .isEqualTo(false);
 
         assertThat(predicate.negate().orElse(null)).isEqualTo(builder.greaterThan(0, 5));
@@ -218,11 +233,12 @@ public class PredicateTest {
         PredicateBuilder builder = new PredicateBuilder(RowType.of(new IntType()));
         Predicate predicate = builder.lessOrEqual(0, null);
 
-        assertThat(predicate.test(new Object[] {4})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {null})).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(4))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of((Object) null))).isEqualTo(false);
 
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(6, 7, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(1, new FieldStats[] {new FieldStats(null, null, 1L)}))
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(6, 7, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 1, new FieldStats[] {new FieldStats(null, null, 1L)}))
                 .isEqualTo(false);
     }
 
@@ -231,11 +247,12 @@ public class PredicateTest {
         PredicateBuilder builder = new PredicateBuilder(RowType.of(new IntType()));
         Predicate predicate = builder.isNull(0);
 
-        assertThat(predicate.test(new Object[] {4})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {null})).isEqualTo(true);
+        assertThat(predicate.test(GenericRow.of(4))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of((Object) null))).isEqualTo(true);
 
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(6, 7, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(5, 7, 1L)})).isEqualTo(true);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(6, 7, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(5, 7, 1L)})).isEqualTo(true);
 
         assertThat(predicate.negate().orElse(null)).isEqualTo(builder.isNotNull(0));
     }
@@ -245,12 +262,12 @@ public class PredicateTest {
         PredicateBuilder builder = new PredicateBuilder(RowType.of(new IntType()));
         Predicate predicate = builder.isNotNull(0);
 
-        assertThat(predicate.test(new Object[] {4})).isEqualTo(true);
-        assertThat(predicate.test(new Object[] {null})).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(4))).isEqualTo(true);
+        assertThat(predicate.test(GenericRow.of((Object) null))).isEqualTo(false);
 
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(6, 7, 0L)})).isEqualTo(true);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(5, 7, 1L)})).isEqualTo(true);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(null, null, 3L)}))
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(6, 7, 0L)})).isEqualTo(true);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(5, 7, 1L)})).isEqualTo(true);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(null, null, 3L)}))
                 .isEqualTo(false);
 
         assertThat(predicate.negate().orElse(null)).isEqualTo(builder.isNull(0));
@@ -262,14 +279,15 @@ public class PredicateTest {
         Predicate predicate = builder.in(0, Arrays.asList(1, 3));
         assertThat(predicate).isInstanceOf(CompoundPredicate.class);
 
-        assertThat(predicate.test(new Object[] {1})).isEqualTo(true);
-        assertThat(predicate.test(new Object[] {2})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {3})).isEqualTo(true);
-        assertThat(predicate.test(new Object[] {null})).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(1))).isEqualTo(true);
+        assertThat(predicate.test(GenericRow.of(2))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(3))).isEqualTo(true);
+        assertThat(predicate.test(GenericRow.of((Object) null))).isEqualTo(false);
 
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(0, 5, 0L)})).isEqualTo(true);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(6, 7, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(1, new FieldStats[] {new FieldStats(null, null, 1L)}))
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(0, 5, 0L)})).isEqualTo(true);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(6, 7, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 1, new FieldStats[] {new FieldStats(null, null, 1L)}))
                 .isEqualTo(false);
     }
 
@@ -279,14 +297,15 @@ public class PredicateTest {
         Predicate predicate = builder.in(0, Arrays.asList(1, null, 3));
         assertThat(predicate).isInstanceOf(CompoundPredicate.class);
 
-        assertThat(predicate.test(new Object[] {1})).isEqualTo(true);
-        assertThat(predicate.test(new Object[] {2})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {3})).isEqualTo(true);
-        assertThat(predicate.test(new Object[] {null})).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(1))).isEqualTo(true);
+        assertThat(predicate.test(GenericRow.of(2))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(3))).isEqualTo(true);
+        assertThat(predicate.test(GenericRow.of((Object) null))).isEqualTo(false);
 
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(0, 5, 0L)})).isEqualTo(true);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(6, 7, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(1, new FieldStats[] {new FieldStats(null, null, 1L)}))
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(0, 5, 0L)})).isEqualTo(true);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(6, 7, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 1, new FieldStats[] {new FieldStats(null, null, 1L)}))
                 .isEqualTo(false);
     }
 
@@ -296,17 +315,19 @@ public class PredicateTest {
         Predicate predicate = builder.notIn(0, Arrays.asList(1, 3));
         assertThat(predicate).isInstanceOf(CompoundPredicate.class);
 
-        assertThat(predicate.test(new Object[] {1})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {2})).isEqualTo(true);
-        assertThat(predicate.test(new Object[] {3})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {null})).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(1))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(2))).isEqualTo(true);
+        assertThat(predicate.test(GenericRow.of(3))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of((Object) null))).isEqualTo(false);
 
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(1, 1, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(3, 3, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(1, 3, 0L)})).isEqualTo(true);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(0, 5, 0L)})).isEqualTo(true);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(6, 7, 0L)})).isEqualTo(true);
-        assertThat(predicate.test(1, new FieldStats[] {new FieldStats(null, null, 1L)}))
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(1, 1, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(3, 3, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(1, 3, 0L)})).isEqualTo(true);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(0, 5, 0L)})).isEqualTo(true);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(6, 7, 0L)})).isEqualTo(true);
+        assertThat(test(predicate, 1, new FieldStats[] {new FieldStats(null, null, 1L)}))
                 .isEqualTo(false);
     }
 
@@ -316,17 +337,22 @@ public class PredicateTest {
         Predicate predicate = builder.notIn(0, Arrays.asList(1, null, 3));
         assertThat(predicate).isInstanceOf(CompoundPredicate.class);
 
-        assertThat(predicate.test(new Object[] {1})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {2})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {3})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {null})).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(1))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(2))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(3))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of((Object) null))).isEqualTo(false);
 
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(1, 1, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(3, 3, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(1, 3, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(0, 5, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(6, 7, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(1, new FieldStats[] {new FieldStats(null, null, 1L)}))
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(1, 1, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(3, 3, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(1, 3, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(0, 5, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(6, 7, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 1, new FieldStats[] {new FieldStats(null, null, 1L)}))
                 .isEqualTo(false);
     }
 
@@ -342,16 +368,17 @@ public class PredicateTest {
         Predicate predicate = builder.in(0, literals);
         assertThat(predicate).isInstanceOf(LeafPredicate.class);
 
-        assertThat(predicate.test(new Object[] {1})).isEqualTo(true);
-        assertThat(predicate.test(new Object[] {2})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {3})).isEqualTo(true);
-        assertThat(predicate.test(new Object[] {null})).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(1))).isEqualTo(true);
+        assertThat(predicate.test(GenericRow.of(2))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(3))).isEqualTo(true);
+        assertThat(predicate.test(GenericRow.of((Object) null))).isEqualTo(false);
 
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(0, 5, 0L)})).isEqualTo(true);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(6, 7, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(1, new FieldStats[] {new FieldStats(null, null, 1L)}))
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(0, 5, 0L)})).isEqualTo(true);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(6, 7, 0L)}))
                 .isEqualTo(false);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(29, 32, 0L)}))
+        assertThat(test(predicate, 1, new FieldStats[] {new FieldStats(null, null, 1L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(29, 32, 0L)}))
                 .isEqualTo(true);
     }
 
@@ -368,16 +395,17 @@ public class PredicateTest {
         Predicate predicate = builder.in(0, literals);
         assertThat(predicate).isInstanceOf(LeafPredicate.class);
 
-        assertThat(predicate.test(new Object[] {1})).isEqualTo(true);
-        assertThat(predicate.test(new Object[] {2})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {3})).isEqualTo(true);
-        assertThat(predicate.test(new Object[] {null})).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(1))).isEqualTo(true);
+        assertThat(predicate.test(GenericRow.of(2))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(3))).isEqualTo(true);
+        assertThat(predicate.test(GenericRow.of((Object) null))).isEqualTo(false);
 
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(0, 5, 0L)})).isEqualTo(true);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(6, 7, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(1, new FieldStats[] {new FieldStats(null, null, 1L)}))
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(0, 5, 0L)})).isEqualTo(true);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(6, 7, 0L)}))
                 .isEqualTo(false);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(29, 32, 0L)}))
+        assertThat(test(predicate, 1, new FieldStats[] {new FieldStats(null, null, 1L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(29, 32, 0L)}))
                 .isEqualTo(true);
     }
 
@@ -393,19 +421,21 @@ public class PredicateTest {
         Predicate predicate = builder.notIn(0, literals);
         assertThat(predicate).isInstanceOf(LeafPredicate.class);
 
-        assertThat(predicate.test(new Object[] {1})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {2})).isEqualTo(true);
-        assertThat(predicate.test(new Object[] {3})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {null})).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(1))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(2))).isEqualTo(true);
+        assertThat(predicate.test(GenericRow.of(3))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of((Object) null))).isEqualTo(false);
 
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(1, 1, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(3, 3, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(1, 3, 0L)})).isEqualTo(true);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(0, 5, 0L)})).isEqualTo(true);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(6, 7, 0L)})).isEqualTo(true);
-        assertThat(predicate.test(1, new FieldStats[] {new FieldStats(null, null, 1L)}))
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(1, 1, 0L)}))
                 .isEqualTo(false);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(29, 32, 0L)}))
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(3, 3, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(1, 3, 0L)})).isEqualTo(true);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(0, 5, 0L)})).isEqualTo(true);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(6, 7, 0L)})).isEqualTo(true);
+        assertThat(test(predicate, 1, new FieldStats[] {new FieldStats(null, null, 1L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(29, 32, 0L)}))
                 .isEqualTo(true);
     }
 
@@ -422,19 +452,24 @@ public class PredicateTest {
         Predicate predicate = builder.notIn(0, literals);
         assertThat(predicate).isInstanceOf(LeafPredicate.class);
 
-        assertThat(predicate.test(new Object[] {1})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {2})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {3})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {null})).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(1))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(2))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(3))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of((Object) null))).isEqualTo(false);
 
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(1, 1, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(3, 3, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(1, 3, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(0, 5, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(6, 7, 0L)})).isEqualTo(false);
-        assertThat(predicate.test(1, new FieldStats[] {new FieldStats(null, null, 1L)}))
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(1, 1, 0L)}))
                 .isEqualTo(false);
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(29, 32, 0L)}))
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(3, 3, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(1, 3, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(0, 5, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(6, 7, 0L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 1, new FieldStats[] {new FieldStats(null, null, 1L)}))
+                .isEqualTo(false);
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(29, 32, 0L)}))
                 .isEqualTo(false);
     }
 
@@ -443,27 +478,30 @@ public class PredicateTest {
         PredicateBuilder builder = new PredicateBuilder(RowType.of(new IntType(), new IntType()));
         Predicate predicate = PredicateBuilder.and(builder.equal(0, 3), builder.equal(1, 5));
 
-        assertThat(predicate.test(new Object[] {4, 5})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {3, 6})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {3, 5})).isEqualTo(true);
-        assertThat(predicate.test(new Object[] {null, 5})).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(4, 5))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(3, 6))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(3, 5))).isEqualTo(true);
+        assertThat(predicate.test(GenericRow.of(null, 5))).isEqualTo(false);
 
         assertThat(
-                        predicate.test(
+                        test(
+                                predicate,
                                 3,
                                 new FieldStats[] {
                                     new FieldStats(3, 6, 0L), new FieldStats(4, 6, 0L)
                                 }))
                 .isEqualTo(true);
         assertThat(
-                        predicate.test(
+                        test(
+                                predicate,
                                 3,
                                 new FieldStats[] {
                                     new FieldStats(3, 6, 0L), new FieldStats(6, 8, 0L)
                                 }))
                 .isEqualTo(false);
         assertThat(
-                        predicate.test(
+                        test(
+                                predicate,
                                 3,
                                 new FieldStats[] {
                                     new FieldStats(6, 7, 0L), new FieldStats(4, 6, 0L)
@@ -479,27 +517,30 @@ public class PredicateTest {
         PredicateBuilder builder = new PredicateBuilder(RowType.of(new IntType(), new IntType()));
         Predicate predicate = PredicateBuilder.or(builder.equal(0, 3), builder.equal(1, 5));
 
-        assertThat(predicate.test(new Object[] {4, 6})).isEqualTo(false);
-        assertThat(predicate.test(new Object[] {3, 6})).isEqualTo(true);
-        assertThat(predicate.test(new Object[] {3, 5})).isEqualTo(true);
-        assertThat(predicate.test(new Object[] {null, 5})).isEqualTo(true);
+        assertThat(predicate.test(GenericRow.of(4, 6))).isEqualTo(false);
+        assertThat(predicate.test(GenericRow.of(3, 6))).isEqualTo(true);
+        assertThat(predicate.test(GenericRow.of(3, 5))).isEqualTo(true);
+        assertThat(predicate.test(GenericRow.of(null, 5))).isEqualTo(true);
 
         assertThat(
-                        predicate.test(
+                        test(
+                                predicate,
                                 3,
                                 new FieldStats[] {
                                     new FieldStats(3, 6, 0L), new FieldStats(4, 6, 0L)
                                 }))
                 .isEqualTo(true);
         assertThat(
-                        predicate.test(
+                        test(
+                                predicate,
                                 3,
                                 new FieldStats[] {
                                     new FieldStats(3, 6, 0L), new FieldStats(6, 8, 0L)
                                 }))
                 .isEqualTo(true);
         assertThat(
-                        predicate.test(
+                        test(
+                                predicate,
                                 3,
                                 new FieldStats[] {
                                     new FieldStats(6, 7, 0L), new FieldStats(8, 10, 0L)
@@ -515,11 +556,62 @@ public class PredicateTest {
         PredicateBuilder builder = new PredicateBuilder(RowType.of(new IntType()));
         Predicate predicate = builder.equal(0, 5);
 
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(null, null, 3L)}))
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(null, null, 3L)}))
                 .isEqualTo(false);
 
         // unknown stats, we don't know, likely to hit
-        assertThat(predicate.test(3, new FieldStats[] {new FieldStats(null, null, 4L)}))
+        assertThat(test(predicate, 3, new FieldStats[] {new FieldStats(null, null, 4L)}))
                 .isEqualTo(true);
+    }
+
+    @Test
+    public void testPredicateToString() {
+        PredicateBuilder builder1 = new PredicateBuilder(RowType.of(new IntType()));
+        Predicate p1 = builder1.equal(0, 5);
+        assertThat(p1.toString()).isEqualTo("Equal(f0, 5)");
+
+        PredicateBuilder builder2 = new PredicateBuilder(RowType.of(new IntType()));
+        Predicate p2 = builder2.greaterThan(0, 5);
+        assertThat(p2.toString()).isEqualTo("GreaterThan(f0, 5)");
+
+        PredicateBuilder builder3 = new PredicateBuilder(RowType.of(new IntType(), new IntType()));
+        Predicate p3 = PredicateBuilder.and(builder3.equal(0, 3), builder3.equal(1, 5));
+        assertThat(p3.toString()).isEqualTo("And([Equal(f0, 3), Equal(f1, 5)])");
+
+        PredicateBuilder builder4 = new PredicateBuilder(RowType.of(new IntType(), new IntType()));
+        Predicate p4 = PredicateBuilder.or(builder4.equal(0, 3), builder4.equal(1, 5));
+        assertThat(p4.toString()).isEqualTo("Or([Equal(f0, 3), Equal(f1, 5)])");
+
+        PredicateBuilder builder5 = new PredicateBuilder(RowType.of(new IntType()));
+        Predicate p5 = builder5.isNotNull(0);
+        assertThat(p5.toString()).isEqualTo("IsNotNull(f0)");
+
+        PredicateBuilder builder6 = new PredicateBuilder(RowType.of(new IntType()));
+        Predicate p6 = builder6.in(0, Arrays.asList(1, null, 3, 4));
+        assertThat(p6.toString())
+                .isEqualTo(
+                        "Or([Or([Or([Equal(f0, 1), Equal(f0, null)]), Equal(f0, 3)]), Equal(f0, 4)])");
+
+        PredicateBuilder builder7 = new PredicateBuilder(RowType.of(new IntType()));
+        Predicate p7 = builder7.notIn(0, Arrays.asList(1, null, 3, 4));
+        assertThat(p7.toString())
+                .isEqualTo(
+                        "And([And([And([NotEqual(f0, 1), NotEqual(f0, null)]), NotEqual(f0, 3)]), NotEqual(f0, 4)])");
+
+        PredicateBuilder builder8 = new PredicateBuilder(RowType.of(new IntType()));
+        List<Object> literals = new ArrayList<>();
+        for (int i = 1; i <= 21; i++) {
+            literals.add(i);
+        }
+        Predicate p8 = builder8.in(0, literals);
+        assertThat(p8.toString())
+                .isEqualTo(
+                        "In(f0, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21])");
+
+        PredicateBuilder builder9 = new PredicateBuilder(RowType.of(new IntType()));
+        Predicate p9 = builder9.notIn(0, literals);
+        assertThat(p9.toString())
+                .isEqualTo(
+                        "NotIn(f0, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21])");
     }
 }

@@ -35,11 +35,11 @@ There are three types of metrics provided in the Paimon metric system, `Gauge`, 
 - `Counter`: Used to count values by incrementing and decrementing.
 - `Histogram`: Measure the statistical distribution of a set of values including the min, max, mean, standard deviation and percentile.
 
-Paimon has supported built-in metrics to measure operations of **commits**, **scans** and **compactions**, which can be bridged to any computing engine that supports, like Flink, Spark etc.
+Paimon has supported built-in metrics to measure operations of **commits**, **scans**, **writes** and **compactions**, which can be bridged to any computing engine that supports, like Flink, Spark etc.
 
 ## Metrics List
 
-Below is lists of Paimon built-in metrics. They are summarized into three types of metrics, scan metrics, commit metrics and compaction metrics.
+Below is lists of Paimon built-in metrics. They are summarized into types of scan metrics, commit metrics, write metrics, write buffer metrics and compaction metrics.
 
 ### Scan Metrics
 
@@ -215,6 +215,72 @@ Below is lists of Paimon built-in metrics. They are summarized into three types 
     </tbody>
 </table>
 
+### Write Metrics
+
+<table class="table table-bordered">
+    <thead>
+    <tr>
+      <th class="text-left" style="width: 225pt">Metrics Name</th>
+      <th class="text-left" style="width: 65pt">Level</th>
+      <th class="text-left" style="width: 70pt">Type</th>
+      <th class="text-left" style="width: 300pt">Description</th>
+    </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td>writeRecordCount</td>
+            <td>Bucket</td>
+            <td>Counter</td>
+            <td>Total number of records written into the bucket.</td>
+        </tr>
+        <tr>
+            <td>flushCostMillis</td>
+            <td>Bucket</td>
+            <td>Histogram</td>
+            <td>Distributions of the time taken by the last few write buffer flushing.</td>
+        </tr>
+        <tr>
+            <td>prepareCommitCostMillis</td>
+            <td>Bucket</td>
+            <td>Histogram</td>
+            <td>Distributions of the time taken by the last few call of `prepareCommit`.</td>
+        </tr>
+    </tbody>
+</table>
+
+### Write Buffer Metrics
+
+<table class="table table-bordered">
+    <thead>
+    <tr>
+      <th class="text-left" style="width: 225pt">Metrics Name</th>
+      <th class="text-left" style="width: 65pt">Level</th>
+      <th class="text-left" style="width: 70pt">Type</th>
+      <th class="text-left" style="width: 300pt">Description</th>
+    </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td>bufferPreemptCount</td>
+            <td>Table</td>
+            <td>Gauge</td>
+            <td>The total number of memory preempted.</td>
+        </tr>
+        <tr>
+            <td>usedWriteBufferSizeByte</td>
+            <td>Table</td>
+            <td>Gauge</td>
+            <td>Current used write buffer size in byte.</td>
+        </tr>
+        <tr>
+            <td>totalWriteBufferSizeByte</td>
+            <td>Table</td>
+            <td>Gauge</td>
+            <td>The total write buffer size configured in byte.</td>
+        </tr>
+    </tbody>
+</table>
+
 ### Compaction Metrics
 
 <table class="table table-bordered">
@@ -227,6 +293,12 @@ Below is lists of Paimon built-in metrics. They are summarized into three types 
     </tr>
     </thead>
     <tbody>
+        <tr>
+            <td>level0FileCount</td>
+            <td>Bucket</td>
+            <td>Gauge</td>
+            <td>The level 0 file count will become larger if asynchronous compaction cannot be done in time.</td>
+        </tr>
         <tr>
             <td>lastCompactionDuration</td>
             <td>Bucket</td>
@@ -317,6 +389,16 @@ From Flink Web-UI, go to the committer operator's metrics, it's shown as:
             <td>paimon.table.&lt;table_name&gt;.commit</td>
         </tr>
         <tr>
+            <td>Write Metrics</td>
+            <td>&lt;host&gt;.taskmanager.&lt;tm_id&gt;.&lt;job_name&gt;.&lt;writer_operator_name&gt;.&lt;subtask_index&gt;</td>
+            <td>paimon.table.&lt;table_name&gt;.partition.&lt;partition_string&gt;.bucket.&lt;bucket_index&gt;.writer</td>
+        </tr>
+        <tr>
+            <td>Write Buffer Metrics</td>
+            <td>&lt;host&gt;.taskmanager.&lt;tm_id&gt;.&lt;job_name&gt;.&lt;writer_operator_name&gt;.&lt;subtask_index&gt;</td>
+            <td>paimon.table.&lt;table_name&gt;.writeBuffer</td>
+        </tr>
+        <tr>
             <td>Compaction Metrics</td>
             <td>&lt;host&gt;.taskmanager.&lt;tm_id&gt;.&lt;job_name&gt;.&lt;writer_operator_name&gt;.&lt;subtask_index&gt;</td>
             <td>paimon.table.&lt;table_name&gt;.partition.&lt;partition_string&gt;.bucket.&lt;bucket_index&gt;.compaction</td>
@@ -351,13 +433,23 @@ When using Flink to read and write, Paimon has implemented some key standard Fli
     </thead>
     <tbody>
         <tr>
+            <td>currentEmitEventTimeLag</td>
+            <td>Flink Source Operator</td>
+            <td>Gauge</td>
+            <td>Time difference between sending the record out of source and file creation.</td>
+        </tr>
+        <tr>
             <td>currentFetchEventTimeLag</td>
             <td>Flink Source Operator</td>
             <td>Gauge</td>
             <td>Time difference between reading the data file and file creation.</td>
-        </tr>    
+        </tr>
     </tbody>
 </table>
+
+{{< hint info >}}
+Please note that if you specified `consumer-id` in your streaming query, the level of source metrics should turn into the reader operator, which is behind the `Monitor` operator.
+{{< /hint >}}
 
 #### Sink Metrics (Flink)
 

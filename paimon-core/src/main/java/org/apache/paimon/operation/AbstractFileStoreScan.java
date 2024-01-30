@@ -33,13 +33,13 @@ import org.apache.paimon.partition.PartitionPredicate;
 import org.apache.paimon.predicate.Predicate;
 import org.apache.paimon.schema.SchemaManager;
 import org.apache.paimon.schema.TableSchema;
-import org.apache.paimon.stats.FieldStatsArraySerializer;
+import org.apache.paimon.stats.BinaryTableStats;
 import org.apache.paimon.table.source.ScanMode;
 import org.apache.paimon.types.RowType;
 import org.apache.paimon.utils.FileStorePathFactory;
 import org.apache.paimon.utils.Filter;
 import org.apache.paimon.utils.Pair;
-import org.apache.paimon.utils.ParallellyExecuteUtils;
+import org.apache.paimon.utils.ScanParallelExecutor;
 import org.apache.paimon.utils.SnapshotManager;
 
 import javax.annotation.Nullable;
@@ -61,7 +61,6 @@ import static org.apache.paimon.utils.Preconditions.checkState;
 /** Default implementation of {@link FileStoreScan}. */
 public abstract class AbstractFileStoreScan implements FileStoreScan {
 
-    private final FieldStatsArraySerializer partitionStatsConverter;
     private final RowType partitionType;
     private final SnapshotManager snapshotManager;
     private final ManifestFile.Factory manifestFileFactory;
@@ -79,6 +78,7 @@ public abstract class AbstractFileStoreScan implements FileStoreScan {
     private List<ManifestFileMeta> specifiedManifests = null;
     private ScanMode scanMode = ScanMode.ALL;
     private Filter<Integer> levelFilter = null;
+    private Long dataFileTimeMills = null;
 
     private ManifestCacheFilter manifestCacheFilter = null;
     private final Integer scanManifestParallelism;
@@ -95,7 +95,6 @@ public abstract class AbstractFileStoreScan implements FileStoreScan {
             int numOfBuckets,
             boolean checkNumOfBuckets,
             Integer scanManifestParallelism) {
-        this.partitionStatsConverter = new FieldStatsArraySerializer(partitionType);
         this.partitionType = partitionType;
         this.bucketKeyFilter = bucketKeyFilter;
         this.snapshotManager = snapshotManager;
@@ -111,7 +110,7 @@ public abstract class AbstractFileStoreScan implements FileStoreScan {
     @Override
     public FileStoreScan withPartitionFilter(Predicate predicate) {
         if (partitionType.getFieldCount() > 0 && predicate != null) {
-            this.partitionFilter = PartitionPredicate.fromPredicate(partitionType, predicate);
+            this.partitionFilter = PartitionPredicate.fromPredicate(predicate);
         } else {
             this.partitionFilter = null;
         }
@@ -188,6 +187,12 @@ public abstract class AbstractFileStoreScan implements FileStoreScan {
     }
 
     @Override
+    public FileStoreScan withDataFileTimeMills(long dataFileTimeMills) {
+        this.dataFileTimeMills = dataFileTimeMills;
+        return this;
+    }
+
+    @Override
     public FileStoreScan withManifestCacheFilter(ManifestCacheFilter manifestFilter) {
         this.manifestCacheFilter = manifestFilter;
         return this;
@@ -254,13 +259,13 @@ public abstract class AbstractFileStoreScan implements FileStoreScan {
 
         AtomicLong cntEntries = new AtomicLong(0);
         Iterable<ManifestEntry> entries =
-                ParallellyExecuteUtils.parallelismBatchIterable(
+                ScanParallelExecutor.parallelismBatchIterable(
                         files -> {
                             List<ManifestEntry> entryList =
                                     files.parallelStream()
                                             .filter(this::filterManifestFileMeta)
                                             .flatMap(m -> readManifest.apply(m).stream())
-                                            .filter(this::filterByStats)
+                                            .filter(this::filterUnmergedManifestEntry)
                                             .collect(Collectors.toList());
                             cntEntries.getAndAdd(entryList.size());
                             return entryList;
@@ -295,7 +300,7 @@ public abstract class AbstractFileStoreScan implements FileStoreScan {
             // however entry.bucket() was computed against the old numOfBuckets
             // and thus the filtered manifest entries might be empty
             // which renders the bucket check invalid
-            if (filterByBucket(file) && filterByBucketSelector(file) && filterByLevel(file)) {
+            if (filterMergedManifestEntry(file)) {
                 files.add(file);
             }
         }
@@ -372,29 +377,38 @@ public abstract class AbstractFileStoreScan implements FileStoreScan {
 
     /** Note: Keep this thread-safe. */
     private boolean filterManifestFileMeta(ManifestFileMeta manifest) {
+        if (partitionFilter == null) {
+            return true;
+        }
+
+        BinaryTableStats stats = manifest.partitionStats();
         return partitionFilter == null
                 || partitionFilter.test(
                         manifest.numAddedFiles() + manifest.numDeletedFiles(),
-                        manifest.partitionStats().fields(partitionStatsConverter));
+                        stats.minValues(),
+                        stats.maxValues(),
+                        stats.nullCounts());
     }
 
     /** Note: Keep this thread-safe. */
-    private boolean filterByBucket(ManifestEntry entry) {
-        return (bucketFilter == null || bucketFilter.test(entry.bucket()));
-    }
+    private boolean filterUnmergedManifestEntry(ManifestEntry entry) {
+        if (dataFileTimeMills != null
+                && entry.file().creationTimeEpochMillis() < dataFileTimeMills) {
+            return false;
+        }
 
-    /** Note: Keep this thread-safe. */
-    private boolean filterByBucketSelector(ManifestEntry entry) {
-        return bucketKeyFilter.select(entry.bucket(), entry.totalBuckets());
-    }
-
-    /** Note: Keep this thread-safe. */
-    private boolean filterByLevel(ManifestEntry entry) {
-        return (levelFilter == null || levelFilter.test(entry.file().level()));
+        return filterByStats(entry);
     }
 
     /** Note: Keep this thread-safe. */
     protected abstract boolean filterByStats(ManifestEntry entry);
+
+    /** Note: Keep this thread-safe. */
+    private boolean filterMergedManifestEntry(ManifestEntry entry) {
+        return (bucketFilter == null || bucketFilter.test(entry.bucket()))
+                && bucketKeyFilter.select(entry.bucket(), entry.totalBuckets())
+                && (levelFilter == null || levelFilter.test(entry.file().level()));
+    }
 
     /** Note: Keep this thread-safe. */
     protected abstract boolean filterWholeBucketByStats(List<ManifestEntry> entries);

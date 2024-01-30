@@ -21,13 +21,16 @@ import org.apache.paimon.table.source.{ReadBuilder, Split}
 
 import org.apache.spark.sql.connector.read.{Batch, InputPartition, PartitionReaderFactory}
 
-/** A Spark {@link Batch} for paimon. */
+import java.util.Objects
+
+/** A Spark [[Batch]] for paimon. */
 case class PaimonBatch(splits: Array[Split], readBuilder: ReadBuilder) extends Batch {
 
   override def planInputPartitions(): Array[InputPartition] =
     splits.map(new SparkInputPartition(_).asInstanceOf[InputPartition])
 
-  override def createReaderFactory(): PartitionReaderFactory = new SparkReaderFactory(readBuilder)
+  override def createReaderFactory(): PartitionReaderFactory = new PaimonPartitionReaderFactory(
+    readBuilder)
 
   override def equals(obj: Any): Boolean = {
     obj match {
@@ -37,5 +40,9 @@ case class PaimonBatch(splits: Array[Split], readBuilder: ReadBuilder) extends B
 
       case _ => false
     }
+  }
+
+  override def hashCode(): Int = {
+    Objects.hashCode(splits.toSeq, readBuilder)
   }
 }

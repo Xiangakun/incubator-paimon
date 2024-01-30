@@ -85,6 +85,7 @@ import static org.apache.paimon.hive.HiveCatalogOptions.IDENTIFIER;
 import static org.apache.paimon.hive.HiveCatalogOptions.LOCATION_IN_PROPERTIES;
 import static org.apache.paimon.options.CatalogOptions.LOCK_ENABLED;
 import static org.apache.paimon.options.CatalogOptions.TABLE_TYPE;
+import static org.apache.paimon.options.OptionsUtils.convertToPropertiesPrefixKey;
 import static org.apache.paimon.utils.Preconditions.checkArgument;
 import static org.apache.paimon.utils.Preconditions.checkState;
 import static org.apache.paimon.utils.StringUtils.isNullOrWhitespaceOnly;
@@ -92,6 +93,11 @@ import static org.apache.paimon.utils.StringUtils.isNullOrWhitespaceOnly;
 /** A catalog implementation for Hive. */
 public class HiveCatalog extends AbstractCatalog {
     private static final Logger LOG = LoggerFactory.getLogger(HiveCatalog.class);
+
+    // Reserved properties
+    public static final String COMMENT_PROP = "comment";
+    public static final String TABLE_TYPE_PROP = "table_type";
+    public static final String PAIMON_TABLE_TYPE_VALUE = "paimon";
 
     // we don't include paimon-hive-connector as dependencies because it depends on
     // hive-exec
@@ -103,7 +109,6 @@ public class HiveCatalog extends AbstractCatalog {
     private static final String STORAGE_HANDLER_CLASS_NAME =
             "org.apache.paimon.hive.PaimonStorageHandler";
     private static final String HIVE_PREFIX = "hive.";
-    private static final int HIVE_PREFIX_LENGTH = HIVE_PREFIX.length();
     public static final String HIVE_SITE_FILE = "hive-site.xml";
 
     private final HiveConf hiveConf;
@@ -216,18 +221,58 @@ public class HiveCatalog extends AbstractCatalog {
     }
 
     @Override
-    protected void createDatabaseImpl(String name) {
+    protected void createDatabaseImpl(String name, Map<String, String> properties) {
         try {
-            Path databasePath = newDatabasePath(name);
+            Database database = convertToHiveDatabase(name, properties);
+            Path databasePath =
+                    database.getLocationUri() == null
+                            ? newDatabasePath(name)
+                            : new Path(database.getLocationUri());
             locationHelper.createPathIfRequired(databasePath, fileIO);
-
-            Database database = new Database();
-            database.setName(name);
             locationHelper.specifyDatabaseLocation(databasePath, database);
             client.createDatabase(database);
         } catch (TException | IOException e) {
             throw new RuntimeException("Failed to create database " + name, e);
         }
+    }
+
+    private Database convertToHiveDatabase(String name, Map<String, String> properties) {
+        Database database = new Database();
+        database.setName(name);
+        Map<String, String> parameter = new HashMap<>();
+        properties.forEach(
+                (key, value) -> {
+                    if (key.equals(COMMENT_PROP)) {
+                        database.setDescription(value);
+                    } else if (key.equals(DB_LOCATION_PROP)) {
+                        database.setLocationUri(value);
+                    } else if (value != null) {
+                        parameter.put(key, value);
+                    }
+                });
+        database.setParameters(parameter);
+        return database;
+    }
+
+    @Override
+    public Map<String, String> loadDatabasePropertiesImpl(String name) {
+        try {
+            return convertToProperties(client.getDatabase(name));
+        } catch (TException e) {
+            throw new RuntimeException(
+                    String.format("Failed to get database %s properties", name), e);
+        }
+    }
+
+    private Map<String, String> convertToProperties(Database database) {
+        Map<String, String> properties = new HashMap<>(database.getParameters());
+        if (database.getLocationUri() != null) {
+            properties.put(DB_LOCATION_PROP, database.getLocationUri());
+        }
+        if (database.getDescription() != null) {
+            properties.put(COMMENT_PROP, database.getDescription());
+        }
+        return properties;
     }
 
     @Override
@@ -249,9 +294,7 @@ public class HiveCatalog extends AbstractCatalog {
                     .filter(
                             tableName -> {
                                 Identifier identifier = new Identifier(databaseName, tableName);
-                                // the environment here may not be able to access non-paimon
-                                // tables, so we just check the schema file first
-                                return schemaFileExists(identifier) && tableExists(identifier);
+                                return tableExists(identifier);
                             })
                     .collect(Collectors.toList());
         } catch (TException e) {
@@ -335,14 +378,7 @@ public class HiveCatalog extends AbstractCatalog {
         Table table =
                 newHmsTable(
                         identifier,
-                        tableSchema.options().entrySet().stream()
-                                .filter(entry -> entry.getKey().startsWith(HIVE_PREFIX))
-                                .collect(
-                                        Collectors.toMap(
-                                                entry ->
-                                                        entry.getKey()
-                                                                .substring(HIVE_PREFIX_LENGTH),
-                                                Map.Entry::getValue)));
+                        convertToPropertiesPrefixKey(tableSchema.options(), HIVE_PREFIX));
         try {
             updateHmsTable(table, identifier, tableSchema);
             client.createTable(table);
@@ -402,8 +438,10 @@ public class HiveCatalog extends AbstractCatalog {
         try {
             // sync to hive hms
             Table table = client.getTable(identifier.getDatabaseName(), identifier.getObjectName());
+            updateHmsTablePars(table, schema);
             updateHmsTable(table, identifier, schema);
-            client.alter_table(identifier.getDatabaseName(), identifier.getObjectName(), table);
+            client.alter_table(
+                    identifier.getDatabaseName(), identifier.getObjectName(), table, true);
         } catch (Exception te) {
             schemaManager.deleteSchema(schema.id());
             throw new RuntimeException(te);
@@ -459,6 +497,7 @@ public class HiveCatalog extends AbstractCatalog {
                         null,
                         null,
                         tableType.toString().toUpperCase(Locale.ROOT) + "_TABLE");
+        table.getParameters().put(TABLE_TYPE_PROP, PAIMON_TABLE_TYPE_VALUE.toUpperCase());
         table.getParameters()
                 .put(hive_metastoreConstants.META_TABLE_STORAGE, STORAGE_HANDLER_CLASS_NAME);
         if (TableType.EXTERNAL.equals(tableType)) {
@@ -519,9 +558,16 @@ public class HiveCatalog extends AbstractCatalog {
                             .collect(Collectors.toList()));
         }
         table.setSd(sd);
+        if (schema.comment() != null) {
+            table.getParameters().put(COMMENT_PROP, schema.comment());
+        }
 
         // update location
         locationHelper.specifyTableLocation(table, getDataTableLocation(identifier).toString());
+    }
+
+    private void updateHmsTablePars(Table table, TableSchema schema) {
+        table.getParameters().putAll(convertToPropertiesPrefixKey(schema.options(), HIVE_PREFIX));
     }
 
     @VisibleForTesting

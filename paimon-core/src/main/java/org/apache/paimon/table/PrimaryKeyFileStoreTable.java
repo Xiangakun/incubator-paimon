@@ -36,6 +36,8 @@ import org.apache.paimon.predicate.Predicate;
 import org.apache.paimon.reader.RecordReader;
 import org.apache.paimon.schema.KeyValueFieldsExtractor;
 import org.apache.paimon.schema.TableSchema;
+import org.apache.paimon.table.query.LocalTableQuery;
+import org.apache.paimon.table.sink.RowKindGenerator;
 import org.apache.paimon.table.sink.SequenceGenerator;
 import org.apache.paimon.table.sink.TableWriteImpl;
 import org.apache.paimon.table.source.InnerTableRead;
@@ -43,6 +45,7 @@ import org.apache.paimon.table.source.KeyValueTableRead;
 import org.apache.paimon.table.source.MergeTreeSplitGenerator;
 import org.apache.paimon.table.source.SplitGenerator;
 import org.apache.paimon.table.source.ValueContentRowDataRecordIterator;
+import org.apache.paimon.types.RowKind;
 import org.apache.paimon.types.RowType;
 
 import java.util.List;
@@ -53,7 +56,7 @@ import static org.apache.paimon.predicate.PredicateBuilder.pickTransformFieldMap
 import static org.apache.paimon.predicate.PredicateBuilder.splitAnd;
 
 /** {@link FileStoreTable} for primary key table. */
-public class PrimaryKeyFileStoreTable extends AbstractFileStoreTable {
+class PrimaryKeyFileStoreTable extends AbstractFileStoreTable {
 
     private static final long serialVersionUID = 1L;
 
@@ -107,13 +110,14 @@ public class PrimaryKeyFileStoreTable extends AbstractFileStoreTable {
                             rowType,
                             extractor,
                             mfFactory,
-                            name());
+                            name(),
+                            catalogEnvironment);
         }
         return lazyStore;
     }
 
     @Override
-    public SplitGenerator splitGenerator() {
+    protected SplitGenerator splitGenerator() {
         return new MergeTreeSplitGenerator(
                 store().newKeyComparator(),
                 store().options().splitTargetSize(),
@@ -126,7 +130,7 @@ public class PrimaryKeyFileStoreTable extends AbstractFileStoreTable {
     }
 
     @Override
-    public BiConsumer<FileStoreScan, Predicate> nonPartitionFilterConsumer() {
+    protected BiConsumer<FileStoreScan, Predicate> nonPartitionFilterConsumer() {
         return (scan, predicate) -> {
             // currently we can only perform filter push down on keys
             // consider this case:
@@ -181,23 +185,30 @@ public class PrimaryKeyFileStoreTable extends AbstractFileStoreTable {
     @Override
     public TableWriteImpl<KeyValue> newWrite(
             String commitUser, ManifestCacheFilter manifestFilter) {
-        final SequenceGenerator sequenceGenerator =
-                SequenceGenerator.create(schema(), store().options());
+        TableSchema schema = schema();
+        CoreOptions options = store().options();
+        final SequenceGenerator sequenceGenerator = SequenceGenerator.create(schema, options);
+        final RowKindGenerator rowKindGenerator = RowKindGenerator.create(schema, options);
         final KeyValue kv = new KeyValue();
         return new TableWriteImpl<>(
                 store().newWrite(commitUser, manifestFilter),
                 createRowKeyExtractor(),
                 record -> {
+                    InternalRow row = record.row();
                     long sequenceNumber =
                             sequenceGenerator == null
                                     ? KeyValue.UNKNOWN_SEQUENCE
-                                    : sequenceGenerator.generate(record.row());
-                    return kv.replace(
-                            record.primaryKey(),
-                            sequenceNumber,
-                            record.row().getRowKind(),
-                            record.row());
-                },
-                name());
+                                    : sequenceGenerator.generate(row);
+                    RowKind rowKind =
+                            rowKindGenerator == null
+                                    ? row.getRowKind()
+                                    : rowKindGenerator.generate(row);
+                    return kv.replace(record.primaryKey(), sequenceNumber, rowKind, row);
+                });
+    }
+
+    @Override
+    public LocalTableQuery newLocalTableQuery() {
+        return new LocalTableQuery(this);
     }
 }

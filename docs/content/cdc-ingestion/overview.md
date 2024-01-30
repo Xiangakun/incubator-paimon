@@ -33,7 +33,7 @@ We currently support the following sync ways:
 
 1. MySQL Synchronizing Table: synchronize one or multiple tables from MySQL into one Paimon table.
 2. MySQL Synchronizing Database: synchronize the whole MySQL database into one Paimon database.
-3. [API Synchronizing Table]({{< ref "/api/flink-api#cdc-ingestion-table" >}}): synchronize your custom DataStream input into one Paimon table.
+3. [Program API Sync]({{< ref "/program-api/flink-api#cdc-ingestion-table" >}}): synchronize your custom DataStream input into one Paimon table.
 4. Kafka Synchronizing Table: synchronize one Kafka topic's table into one Paimon table.
 5. Kafka Synchronizing Database: synchronize one Kafka topic containing multiple tables or multiple topics containing one table each into one Paimon database.
 6. MongoDB Synchronizing Collection: synchronize one Collection from MongoDB into one Paimon table.
@@ -90,11 +90,22 @@ behaviors of `RENAME TABLE` and `DROP COLUMN` will be ignored, `RENAME COLUMN` w
 3. You can use type mapping option `to-string` (Use `--type_mapping`) to map all MySQL data type to STRING.
 4. You can use type mapping option `char-to-string` (Use `--type_mapping`) to map MySQL CHAR(length)/VARCHAR(length) types to STRING.
 5. You can use type mapping option `longtext-to-bytes` (Use `--type_mapping`) to map MySQL LONGTEXT types to BYTES.
-6. MySQL BIT(1) type will be mapped to Boolean.
-7. When using Hive catalog, MySQL TIME type will be mapped to STRING.
-8. MySQL BINARY will be mapped to Paimon VARBINARY. This is because the binary value is passed as bytes in binlog, so it
+6. MySQL `BIGINT UNSIGNED`, `BIGINT UNSIGNED ZEROFILL`, `SERIAL` will be mapped to `DECIMAL(20, 0)` by default. You can 
+use type mapping option `bigint-unsigned-to-bigint` (Use `--type_mapping`) to map these types to Paimon `BIGINT`, but there 
+is potential data overflow because `BIGINT UNSIGNED` can store up to 20 digits integer value but Paimon `BIGINT` can only 
+store up to 19 digits integer value. So you should ensure the overflow won't occur when using this option.
+7. MySQL BIT(1) type will be mapped to Boolean.
+8. When using Hive catalog, MySQL TIME type will be mapped to STRING.
+9. MySQL BINARY will be mapped to Paimon VARBINARY. This is because the binary value is passed as bytes in binlog, so it
    should be mapped to byte type (BYTES or VARBINARY). We choose VARBINARY because it can retain the length information.
 
-## Setting Custom Job Name
+## Custom Job Settings
+
+### Checkpointing
+
+Use `-Dexecution.checkpointing.interval=<interval>` to enable checkpointing and set interval. For 0.7 and later versions,
+if you haven't enabled checkpointing, Paimon will enable checkpointing by default and set checkpoint interval to 180 seconds.
+
+### Job Name
 
 Use `-Dpipeline.name=<job-name>` to set custom synchronization job name.
