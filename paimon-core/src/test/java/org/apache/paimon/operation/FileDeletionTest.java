@@ -36,6 +36,7 @@ import org.apache.paimon.manifest.ManifestList;
 import org.apache.paimon.mergetree.compact.DeduplicateMergeFunction;
 import org.apache.paimon.schema.Schema;
 import org.apache.paimon.schema.SchemaManager;
+import org.apache.paimon.schema.TableSchema;
 import org.apache.paimon.types.RowType;
 import org.apache.paimon.utils.FileStorePathFactory;
 import org.apache.paimon.utils.RecordWriter;
@@ -59,16 +60,18 @@ import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
+import static org.apache.paimon.operation.FileStoreCommitImpl.mustConflictCheck;
 import static org.apache.paimon.operation.FileStoreTestUtils.assertPathExists;
 import static org.apache.paimon.operation.FileStoreTestUtils.assertPathNotExists;
 import static org.apache.paimon.operation.FileStoreTestUtils.commitData;
 import static org.apache.paimon.operation.FileStoreTestUtils.partitionedData;
+import static org.apache.paimon.utils.BranchManager.DEFAULT_MAIN_BRANCH;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Tests for file deletion when expiring snapshot and deleting tag. It also tests that after
  * expiration, empty data file directories (buckets and partitions) are deleted. It didn't extend
- * {@link FileStoreExpireTestBase} because there are not too many codes can be reused.
+ * {@link ExpireSnapshotsTest} because there are not too many codes can be reused.
  */
 public class FileDeletionTest {
 
@@ -205,6 +208,7 @@ public class FileDeletionTest {
 
         // check after expiring
         store.newExpire(1, 1, Long.MAX_VALUE).expire();
+
         assertPathNotExists(fileIO, pathFactory.bucketPath(partition, 0));
         assertPathExists(fileIO, pathFactory.bucketPath(partition, 1));
     }
@@ -423,7 +427,8 @@ public class FileDeletionTest {
             assertPathExists(fileIO, pathFactory.toManifestListPath(manifestListName));
         }
 
-        tagManager.deleteTag("tag1", store.newTagDeletion(), snapshotManager);
+        tagManager.deleteTag(
+                "tag1", store.newTagDeletion(), snapshotManager, Collections.emptyList());
 
         // check data files
         assertPathNotExists(fileIO, pathFactory.bucketPath(partition, 0));
@@ -499,7 +504,8 @@ public class FileDeletionTest {
             assertPathExists(fileIO, pathFactory.toManifestListPath(manifestListName));
         }
 
-        tagManager.deleteTag("tag2", store.newTagDeletion(), snapshotManager);
+        tagManager.deleteTag(
+                "tag2", store.newTagDeletion(), snapshotManager, Collections.emptyList());
 
         // check data files
         assertPathExists(fileIO, pathFactory.bucketPath(partition, 0));
@@ -663,13 +669,14 @@ public class FileDeletionTest {
         }
 
         SchemaManager schemaManager = new SchemaManager(fileIO, new Path(root));
-        schemaManager.createTable(
-                new Schema(
-                        rowType.getFields(),
-                        partitionType.getFieldNames(),
-                        TestKeyValueGenerator.getPrimaryKeys(mode),
-                        Collections.emptyMap(),
-                        null));
+        TableSchema tableSchema =
+                schemaManager.createTable(
+                        new Schema(
+                                rowType.getFields(),
+                                partitionType.getFieldNames(),
+                                TestKeyValueGenerator.getPrimaryKeys(mode),
+                                Collections.emptyMap(),
+                                null));
 
         return new TestFileStore.Builder(
                         "avro",
@@ -679,7 +686,8 @@ public class FileDeletionTest {
                         TestKeyValueGenerator.KEY_TYPE,
                         rowType,
                         TestKeyValueGenerator.TestKeyValueFieldsExtractor.EXTRACTOR,
-                        DeduplicateMergeFunction.factory())
+                        DeduplicateMergeFunction.factory(),
+                        tableSchema)
                 .changelogProducer(changelogProducer)
                 .build();
     }
@@ -722,7 +730,8 @@ public class FileDeletionTest {
                         Collections.emptyMap(),
                         Snapshot.CommitKind.APPEND,
                         store.snapshotManager().latestSnapshot(),
-                        null,
+                        mustConflictCheck(),
+                        DEFAULT_MAIN_BRANCH,
                         null);
     }
 

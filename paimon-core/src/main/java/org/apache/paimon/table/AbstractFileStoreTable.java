@@ -65,9 +65,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.SortedMap;
 import java.util.function.BiConsumer;
 
 import static org.apache.paimon.CoreOptions.PATH;
+import static org.apache.paimon.utils.BranchManager.DEFAULT_MAIN_BRANCH;
 import static org.apache.paimon.utils.Preconditions.checkArgument;
 import static org.apache.paimon.utils.Preconditions.checkNotNull;
 
@@ -134,8 +136,13 @@ abstract class AbstractFileStoreTable implements FileStoreTable {
 
     @Override
     public SnapshotReader newSnapshotReader() {
+        return newSnapshotReader(DEFAULT_MAIN_BRANCH);
+    }
+
+    @Override
+    public SnapshotReader newSnapshotReader(String branchName) {
         return new SnapshotReaderImpl(
-                store().newScan(),
+                store().newScan(branchName),
                 tableSchema,
                 coreOptions(),
                 snapshotManager(),
@@ -143,15 +150,16 @@ abstract class AbstractFileStoreTable implements FileStoreTable {
                 nonPartitionFilterConsumer(),
                 DefaultValueAssigner.create(tableSchema),
                 store().pathFactory(),
-                name());
+                name(),
+                store().newIndexFileHandler());
     }
 
     @Override
     public InnerTableScan newScan() {
         return new InnerTableScanImpl(
+                tableSchema.primaryKeys().size() > 0,
                 coreOptions(),
                 newSnapshotReader(),
-                snapshotManager(),
                 DefaultValueAssigner.create(tableSchema));
     }
 
@@ -169,8 +177,6 @@ abstract class AbstractFileStoreTable implements FileStoreTable {
 
     protected abstract BiConsumer<FileStoreScan, Predicate> nonPartitionFilterConsumer();
 
-    protected abstract FileStoreTable copy(TableSchema newTableSchema);
-
     @Override
     public FileStoreTable copy(Map<String, String> dynamicOptions) {
         checkImmutability(dynamicOptions);
@@ -183,11 +189,6 @@ abstract class AbstractFileStoreTable implements FileStoreTable {
         return copyInternal(dynamicOptions, false);
     }
 
-    @Override
-    public FileStoreTable internalCopyWithoutCheck(Map<String, String> dynamicOptions) {
-        return copyInternal(dynamicOptions, true);
-    }
-
     private void checkImmutability(Map<String, String> dynamicOptions) {
         Map<String, String> options = tableSchema.options();
         // check option is not immutable
@@ -195,6 +196,11 @@ abstract class AbstractFileStoreTable implements FileStoreTable {
                 (k, v) -> {
                     if (!Objects.equals(v, options.get(k))) {
                         SchemaManager.checkAlterTableOption(k);
+
+                        if (CoreOptions.BUCKET.key().equals(k)) {
+                            throw new UnsupportedOperationException(
+                                    "Cannot change bucket number through dynamic options. You might need to rescale bucket.");
+                        }
                     }
                 });
     }
@@ -284,28 +290,54 @@ abstract class AbstractFileStoreTable implements FileStoreTable {
                 snapshotManager(),
                 store().newSnapshotDeletion(),
                 store().newTagManager(),
+                coreOptions().snapshotExpireCleanEmptyDirectories(),
+                coreOptions().changelogLifecycleDecoupled());
+    }
+
+    @Override
+    public ExpireSnapshots newExpireChangelog() {
+        return new ExpireChangelogImpl(
+                snapshotManager(),
+                tagManager(),
+                store().newSnapshotDeletion(),
                 coreOptions().snapshotExpireCleanEmptyDirectories());
     }
 
     @Override
     public TableCommitImpl newCommit(String commitUser) {
+        // Compatibility with previous design, the main branch is written by default
+        return newCommit(commitUser, DEFAULT_MAIN_BRANCH);
+    }
+
+    public TableCommitImpl newCommit(String commitUser, String branchName) {
         CoreOptions options = coreOptions();
         Runnable snapshotExpire = null;
         if (!options.writeOnly()) {
+            boolean changelogDecoupled = options.changelogLifecycleDecoupled();
+            ExpireSnapshots expireChangelog =
+                    newExpireChangelog()
+                            .maxDeletes(options.snapshotExpireLimit())
+                            .retainMin(options.changelogNumRetainMin())
+                            .retainMax(options.changelogNumRetainMax());
             ExpireSnapshots expireSnapshots =
                     newExpireSnapshots()
                             .retainMax(options.snapshotNumRetainMax())
                             .retainMin(options.snapshotNumRetainMin())
                             .maxDeletes(options.snapshotExpireLimit());
             long snapshotTimeRetain = options.snapshotTimeRetain().toMillis();
+            long changelogTimeRetain = options.changelogTimeRetain().toMillis();
             snapshotExpire =
-                    () ->
-                            expireSnapshots
-                                    .olderThanMills(System.currentTimeMillis() - snapshotTimeRetain)
-                                    .expire();
+                    () -> {
+                        long current = System.currentTimeMillis();
+                        expireSnapshots.olderThanMills(current - snapshotTimeRetain).expire();
+                        if (changelogDecoupled) {
+                            expireChangelog.olderThanMills(current - changelogTimeRetain).expire();
+                        }
+                    };
         }
+
         return new TableCommitImpl(
-                store().newCommit(commitUser),
+                store().newCommit(commitUser, branchName),
                 createCommitCallbacks(),
                 snapshotExpire,
                 options.writeOnly() ? null : store().newPartitionExpire(commitUser),
@@ -313,8 +345,9 @@ abstract class AbstractFileStoreTable implements FileStoreTable {
                 catalogEnvironment.lockFactory().create(),
                 CoreOptions.fromMap(options()).consumerExpireTime(),
                 new ConsumerManager(fileIO, path),
-                options.snapshotExpireExecutionMode(),
-                name());
+                coreOptions().snapshotExpireExecutionMode(),
+                name(),
+                coreOptions().forceCreatingSnapshot());
     }
 
     private List<CommitCallback> createCommitCallbacks() {
@@ -413,11 +446,25 @@ abstract class AbstractFileStoreTable implements FileStoreTable {
     @Override
     public void createTag(String tagName, long fromSnapshotId) {
         SnapshotManager snapshotManager = snapshotManager();
+        Snapshot snapshot = null;
+        if (snapshotManager.snapshotExists(fromSnapshotId)) {
+            snapshot = snapshotManager.snapshot(fromSnapshotId);
+        } else {
+            SortedMap<Snapshot, List<String>> tags = tagManager().tags();
+            for (Snapshot snap : tags.keySet()) {
+                if (snap.id() == fromSnapshotId) {
+                    snapshot = snap;
+                    break;
+                } else if (snap.id() > fromSnapshotId) {
+                    break;
+                }
+            }
+        }
         checkArgument(
-                snapshotManager.snapshotExists(fromSnapshotId),
+                snapshot != null,
                 "Cannot create tag because given snapshot #%s doesn't exist.",
                 fromSnapshotId);
-        createTag(tagName, snapshotManager.snapshot(fromSnapshotId));
+        createTag(tagName, snapshot);
     }
 
     @Override
@@ -433,7 +480,12 @@ abstract class AbstractFileStoreTable implements FileStoreTable {
 
     @Override
     public void deleteTag(String tagName) {
-        tagManager().deleteTag(tagName, store().newTagDeletion(), snapshotManager());
+        tagManager()
+                .deleteTag(
+                        tagName,
+                        store().newTagDeletion(),
+                        snapshotManager(),
+                        store().createTagCallbacks());
     }
 
     @Override

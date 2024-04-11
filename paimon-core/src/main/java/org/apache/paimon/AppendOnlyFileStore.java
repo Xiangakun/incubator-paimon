@@ -28,6 +28,7 @@ import org.apache.paimon.operation.AppendOnlyFileStoreWrite;
 import org.apache.paimon.operation.ScanBucketFilter;
 import org.apache.paimon.predicate.Predicate;
 import org.apache.paimon.schema.SchemaManager;
+import org.apache.paimon.schema.TableSchema;
 import org.apache.paimon.table.BucketMode;
 import org.apache.paimon.table.CatalogEnvironment;
 import org.apache.paimon.types.RowType;
@@ -38,6 +39,7 @@ import java.util.List;
 import static org.apache.paimon.predicate.PredicateBuilder.and;
 import static org.apache.paimon.predicate.PredicateBuilder.pickTransformFieldMapping;
 import static org.apache.paimon.predicate.PredicateBuilder.splitAnd;
+import static org.apache.paimon.utils.BranchManager.DEFAULT_MAIN_BRANCH;
 
 /** {@link FileStore} for reading and writing {@link InternalRow}. */
 public class AppendOnlyFileStore extends AbstractFileStore<InternalRow> {
@@ -49,14 +51,14 @@ public class AppendOnlyFileStore extends AbstractFileStore<InternalRow> {
     public AppendOnlyFileStore(
             FileIO fileIO,
             SchemaManager schemaManager,
-            long schemaId,
+            TableSchema schema,
             CoreOptions options,
             RowType partitionType,
             RowType bucketKeyType,
             RowType rowType,
             String tableName,
             CatalogEnvironment catalogEnvironment) {
-        super(fileIO, schemaManager, schemaId, options, partitionType, catalogEnvironment);
+        super(fileIO, schemaManager, schema, options, partitionType, catalogEnvironment);
         this.bucketKeyType = bucketKeyType;
         this.rowType = rowType;
         this.tableName = tableName;
@@ -69,7 +71,11 @@ public class AppendOnlyFileStore extends AbstractFileStore<InternalRow> {
 
     @Override
     public AppendOnlyFileStoreScan newScan() {
-        return newScan(false);
+        return newScan(DEFAULT_MAIN_BRANCH);
+    }
+
+    public AppendOnlyFileStoreScan newScan(String branchName) {
+        return newScan(false, branchName);
     }
 
     @Override
@@ -77,7 +83,7 @@ public class AppendOnlyFileStore extends AbstractFileStore<InternalRow> {
         return new AppendOnlyFileStoreRead(
                 fileIO,
                 schemaManager,
-                schemaId,
+                schema,
                 rowType,
                 FileFormatDiscover.of(options),
                 pathFactory());
@@ -94,17 +100,17 @@ public class AppendOnlyFileStore extends AbstractFileStore<InternalRow> {
         return new AppendOnlyFileStoreWrite(
                 fileIO,
                 newRead(),
-                schemaId,
+                schema.id(),
                 commitUser,
                 rowType,
                 pathFactory(),
                 snapshotManager(),
-                newScan(true).withManifestCacheFilter(manifestFilter),
+                newScan(true, DEFAULT_MAIN_BRANCH).withManifestCacheFilter(manifestFilter),
                 options,
                 tableName);
     }
 
-    private AppendOnlyFileStoreScan newScan(boolean forWrite) {
+    private AppendOnlyFileStoreScan newScan(boolean forWrite, String branchName) {
         ScanBucketFilter bucketFilter =
                 new ScanBucketFilter(bucketKeyType) {
                     @Override
@@ -133,12 +139,13 @@ public class AppendOnlyFileStore extends AbstractFileStore<InternalRow> {
                 bucketFilter,
                 snapshotManager(),
                 schemaManager,
-                schemaId,
+                schema,
                 manifestFileFactory(forWrite),
                 manifestListFactory(forWrite),
                 options.bucket(),
                 forWrite,
-                options.scanManifestParallelism());
+                options.scanManifestParallelism(),
+                branchName);
     }
 
     @Override

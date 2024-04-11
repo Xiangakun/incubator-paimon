@@ -66,7 +66,7 @@ class AppendOnlyFileStoreTable extends AbstractFileStoreTable {
     }
 
     @Override
-    protected FileStoreTable copy(TableSchema newTableSchema) {
+    public FileStoreTable copy(TableSchema newTableSchema) {
         return new AppendOnlyFileStoreTable(fileIO, path, newTableSchema, catalogEnvironment);
     }
 
@@ -77,7 +77,7 @@ class AppendOnlyFileStoreTable extends AbstractFileStoreTable {
                     new AppendOnlyFileStore(
                             fileIO,
                             schemaManager(),
-                            tableSchema.id(),
+                            tableSchema,
                             new CoreOptions(tableSchema.options()),
                             tableSchema.logicalPartitionType(),
                             tableSchema.logicalBucketKeyType(),
@@ -147,7 +147,8 @@ class AppendOnlyFileStoreTable extends AbstractFileStoreTable {
                             "Append only writer can not accept row with RowKind %s",
                             record.row().getRowKind());
                     return record.row();
-                });
+                },
+                CoreOptions.fromMap(tableSchema.options()).ignoreDelete());
     }
 
     @Override

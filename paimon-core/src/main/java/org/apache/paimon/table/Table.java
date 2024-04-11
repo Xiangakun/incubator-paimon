@@ -96,7 +96,12 @@ public interface Table extends Serializable {
     @Experimental
     void deleteBranch(String branchName);
 
+    /** Manually expire snapshots, parameters can be controlled independently of table options. */
+    @Experimental
     ExpireSnapshots newExpireSnapshots();
+
+    @Experimental
+    ExpireSnapshots newExpireChangelog();
 
     // =============== Read & Write Operations ==================
 
